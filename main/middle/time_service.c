@@ -21,10 +21,12 @@
 
 #define LOCATION_RESPONSE_MAX 1536U
 #define LOCATION_TIMEOUT_MS 3000U
+#define LOCATION_PRIMARY_URL "https://ipwho.is/"
+#define LOCATION_FALLBACK_URL "https://ipapi.co/json/"
 #define INTERNET_CHECK_TIMEOUT_MS 2000U
 #define INTERNET_CHECK_ATTEMPTS 2U
 #define INTERNET_CHECK_RETRY_MS 300U
-#define SNTP_TIMEOUT_US (5LL * 1000LL * 1000LL)
+#define SNTP_TIMEOUT_US (8LL * 1000LL * 1000LL)
 
 static const char *TAG = "time_service";
 
@@ -47,6 +49,11 @@ static char s_location_response[LOCATION_RESPONSE_MAX];
 static size_t s_location_length;
 static bool s_location_overflow;
 
+typedef enum {
+    LOCATION_PROVIDER_IPWHO = 1,
+    LOCATION_PROVIDER_IPAPI,
+} location_provider_t;
+
 static esp_err_t location_event(esp_http_client_event_t *event)
 {
     if (event->event_id != HTTP_EVENT_ON_DATA || event->data == NULL || event->data_len <= 0) {
@@ -62,46 +69,99 @@ static esp_err_t location_event(esp_http_client_event_t *event)
     return ESP_OK;
 }
 
-static bool request_utc_offset(int32_t *out)
+static bool parse_ipapi_utc_offset(const cJSON *root, int32_t *out)
+{
+    const cJSON *offset = cJSON_GetObjectItem(root, "utc_offset");
+    if (!cJSON_IsString(offset) || offset->valuestring == NULL) return false;
+
+    const char *text = offset->valuestring;
+    int sign = 1;
+    if (*text == '+' || *text == '-') {
+        sign = *text == '-' ? -1 : 1;
+        text++;
+    }
+    if (strlen(text) != 4U || text[0] < '0' || text[0] > '9' || text[1] < '0' ||
+        text[1] > '9' || text[2] < '0' || text[2] > '9' || text[3] < '0' ||
+        text[3] > '9') {
+        return false;
+    }
+    const int hours = (text[0] - '0') * 10 + text[1] - '0';
+    const int minutes = (text[2] - '0') * 10 + text[3] - '0';
+    const int32_t seconds = sign * (hours * 3600 + minutes * 60);
+    if (hours > 14 || minutes > 59 || seconds < -43200 || seconds > 50400) return false;
+    *out = seconds;
+    return true;
+}
+
+static bool request_utc_offset_from_provider(const char *url, location_provider_t provider,
+                                             int32_t *out, int32_t *out_error,
+                                             int32_t *out_status)
 {
     s_location_length = 0;
     s_location_overflow = false;
     s_location_response[0] = '\0';
     const esp_http_client_config_t config = {
-        .url = "https://ipwho.is/",
+        .url = url,
         .event_handler = location_event,
         .timeout_ms = LOCATION_TIMEOUT_MS,
         .crt_bundle_attach = esp_crt_bundle_attach,
     };
     esp_http_client_handle_t client = esp_http_client_init(&config);
     if (client == NULL) {
-        ESP_LOGW(TAG, "IP timezone client allocation failed");
+        *out_error = ESP_ERR_NO_MEM;
+        *out_status = 0;
+        ESP_LOGW(TAG, "IP timezone client allocation failed: provider=%d", provider);
         return false;
     }
+    esp_http_client_set_header(client, "User-Agent", "ESPARK-ECLOCK/1.0");
     const esp_err_t err = esp_http_client_perform(client);
     const int status = esp_http_client_get_status_code(client);
     esp_http_client_cleanup(client);
+    *out_error = err;
+    *out_status = status;
     if (err != ESP_OK || status != 200 || s_location_overflow) {
-        ESP_LOGW(TAG, "IP timezone failed: err=%s status=%d overflow=%d", esp_err_to_name(err),
-                 status, s_location_overflow);
+        ESP_LOGW(TAG, "IP timezone failed: provider=%d err=%s status=%d overflow=%d", provider,
+                 esp_err_to_name(err), status, s_location_overflow);
         return false;
     }
 
     cJSON *root = cJSON_Parse(s_location_response);
     cJSON *timezone = root == NULL ? NULL : cJSON_GetObjectItem(root, "timezone");
     cJSON *offset = timezone == NULL ? NULL : cJSON_GetObjectItem(timezone, "offset");
-    const bool valid = cJSON_IsNumber(offset) && offset->valueint >= -43200 && offset->valueint <= 50400;
+    const bool valid = provider == LOCATION_PROVIDER_IPWHO
+                           ? cJSON_IsNumber(offset) && offset->valueint >= -43200 &&
+                                 offset->valueint <= 50400
+                           : parse_ipapi_utc_offset(root, out);
     if (valid) {
-        *out = offset->valueint;
-        ESP_LOGI(TAG, "IP timezone offset acquired: %ld seconds", (long)*out);
+        if (provider == LOCATION_PROVIDER_IPWHO) *out = offset->valueint;
+        ESP_LOGI(TAG, "IP timezone offset acquired: provider=%d offset=%ld seconds", provider,
+                 (long)*out);
     } else {
-        ESP_LOGW(TAG, "IP timezone response has no valid UTC offset");
+        *out_error = ESP_FAIL;
+        ESP_LOGW(TAG, "IP timezone response has no valid UTC offset: provider=%d", provider);
     }
     cJSON_Delete(root);
     return valid;
 }
 
-static bool check_internet(void)
+static bool request_utc_offset(int32_t *out, int32_t *out_error, int32_t *out_status,
+                               uint32_t *out_flags)
+{
+    if (request_utc_offset_from_provider(LOCATION_PRIMARY_URL, LOCATION_PROVIDER_IPWHO, out,
+                                         out_error, out_status)) {
+        *out_flags = LOCATION_PROVIDER_IPWHO;
+        return true;
+    }
+    if (request_utc_offset_from_provider(LOCATION_FALLBACK_URL, LOCATION_PROVIDER_IPAPI, out,
+                                         out_error, out_status)) {
+        *out_flags = LOCATION_PROVIDER_IPAPI;
+        return true;
+    }
+    *out_flags = LOCATION_PROVIDER_IPAPI;
+    return false;
+}
+
+static bool check_internet(int32_t *out_error, int32_t *out_status)
 {
     for (unsigned attempt = 1; attempt <= INTERNET_CHECK_ATTEMPTS; ++attempt) {
         const esp_http_client_config_t config = {
@@ -115,6 +175,8 @@ static bool check_internet(void)
         const esp_err_t err = esp_http_client_perform(client);
         const int status = esp_http_client_get_status_code(client);
         esp_http_client_cleanup(client);
+        *out_error = err;
+        *out_status = status;
         if (err == ESP_OK && status >= 200 && status < 400) {
             ESP_LOGI(TAG, "Internet HTTPS check passed");
             return true;
@@ -126,19 +188,28 @@ static bool check_internet(void)
     return false;
 }
 
-static bool wait_for_sntp(int64_t deadline_us)
+static esp_err_t start_sntp_session(void)
 {
     // SNTP's completion semaphore is one-shot, so every synchronization needs a new session.
     if (s_sntp_initialized) esp_netif_sntp_deinit();
     s_sntp_initialized = false;
     const esp_sntp_config_t config = ESP_NETIF_SNTP_DEFAULT_CONFIG_MULTIPLE(
-        2, ESP_SNTP_SERVER_LIST("time.cloudflare.com", "time.google.com"));
-    if (esp_netif_sntp_init(&config) != ESP_OK) {
-        ESP_LOGW(TAG, "SNTP session initialization failed");
-        return false;
+        2, ESP_SNTP_SERVER_LIST("ntp.aliyun.com", "ntp.tencent.com"));
+    const esp_err_t err = esp_netif_sntp_init(&config);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "SNTP session initialization failed: %s", esp_err_to_name(err));
+    } else {
+        ESP_LOGI(TAG, "SNTP started: ntp.aliyun.com, ntp.tencent.com, timeout=%d ms",
+                 (int)(SNTP_TIMEOUT_US / 1000LL));
     }
+    if (err != ESP_OK) return err;
     s_sntp_initialized = true;
+    return ESP_OK;
+}
 
+static bool wait_for_sntp(int64_t deadline_us)
+{
+    if (esp_netif_sntp_sync_wait(0) == ESP_OK) return true;
     while (esp_timer_get_time() < deadline_us) {
         if (esp_netif_sntp_sync_wait(pdMS_TO_TICKS(100)) == ESP_OK) return true;
     }
@@ -146,13 +217,15 @@ static bool wait_for_sntp(int64_t deadline_us)
     return false;
 }
 
-static void apply_sync(int32_t utc_offset_seconds)
+static void apply_sync(int32_t utc_offset_seconds, bool persist_utc_offset)
 {
     s_utc_offset_seconds = utc_offset_seconds;
     s_time_valid = true;
-    const esp_err_t save_err = app_config_save_utc_offset(&s_config, utc_offset_seconds);
+    const esp_err_t save_err = persist_utc_offset
+                                   ? app_config_save_utc_offset(&s_config, utc_offset_seconds)
+                                   : ESP_OK;
     (void)runtime_event_log_append(RUNTIME_EVENT_TIME_SYNCED, utc_offset_seconds,
-                                   (int32_t)save_err, 0);
+                                   (int32_t)save_err, persist_utc_offset ? 1U : 0U);
     if (s_sntp_initialized) {
         esp_netif_sntp_deinit();
         s_sntp_initialized = false;
@@ -209,41 +282,63 @@ static void sync_task(void *arg)
         }
 
         clock_display_post_event(CLOCK_EVENT_NETWORK_CHECKING);
-        if (!check_internet()) {
+        int32_t internet_error = ESP_OK;
+        int32_t internet_status = 0;
+        if (!check_internet(&internet_error, &internet_status)) {
             (void)wifi_manager_stop();
-            (void)runtime_event_log_append(RUNTIME_EVENT_NETWORK_FAILURE, 0, 0, 0);
+            (void)runtime_event_log_append(RUNTIME_EVENT_NETWORK_FAILURE, internet_error,
+                                           internet_status, 0);
             clock_display_post_event(CLOCK_EVENT_SYNC_FAILED);
             s_sync_active = false;
             continue;
         }
         if (sync_was_cancelled(generation)) {
+            s_sync_active = false;
+            continue;
+        }
+
+        const int64_t sntp_deadline_us = esp_timer_get_time() + SNTP_TIMEOUT_US;
+        const esp_err_t sntp_start_err = start_sntp_session();
+        if (sntp_start_err != ESP_OK) {
+            (void)wifi_manager_stop();
+            (void)runtime_event_log_append(RUNTIME_EVENT_SNTP_FAILURE, sntp_start_err, 0, 0);
+            clock_display_post_event(CLOCK_EVENT_SYNC_FAILED);
             s_sync_active = false;
             continue;
         }
 
         clock_display_post_event(CLOCK_EVENT_LOCATION_SYNCING);
         int32_t offset = 0;
-        if (!request_utc_offset(&offset)) {
-            (void)wifi_manager_stop();
-            (void)runtime_event_log_append(RUNTIME_EVENT_LOCATION_FAILURE, 0, 0, 0);
-            clock_display_post_event(CLOCK_EVENT_SYNC_FAILED);
-            s_sync_active = false;
-            continue;
+        int32_t location_error = ESP_OK;
+        int32_t location_status = 0;
+        uint32_t location_provider = 0;
+        const bool location_succeeded = request_utc_offset(&offset, &location_error,
+                                                            &location_status, &location_provider);
+        if (!location_succeeded) {
+            (void)runtime_event_log_append(RUNTIME_EVENT_LOCATION_FAILURE, location_error,
+                                           location_status, location_provider);
+            ESP_LOGW(TAG, "IP timezone unavailable; using %s UTC offset",
+                     s_config.has_utc_offset ? "saved" : "UTC+8 default");
         }
+        offset = clock_select_utc_offset(s_config.has_utc_offset, s_config.utc_offset_seconds,
+                                         location_succeeded, offset);
         if (sync_was_cancelled(generation)) {
+            if (s_sntp_initialized) {
+                esp_netif_sntp_deinit();
+                s_sntp_initialized = false;
+            }
             s_sync_active = false;
             continue;
         }
 
         clock_display_post_event(CLOCK_EVENT_SNTP_SYNCING);
-        const int64_t sntp_deadline_us = esp_timer_get_time() + SNTP_TIMEOUT_US;
         if (!wait_for_sntp(sntp_deadline_us)) {
             if (s_sntp_initialized) {
                 esp_netif_sntp_deinit();
                 s_sntp_initialized = false;
             }
             (void)wifi_manager_stop();
-            (void)runtime_event_log_append(RUNTIME_EVENT_SNTP_FAILURE, 0, 0, 0);
+            (void)runtime_event_log_append(RUNTIME_EVENT_SNTP_FAILURE, ESP_ERR_TIMEOUT, 0, 0);
             clock_display_post_event(CLOCK_EVENT_SYNC_FAILED);
             s_sync_active = false;
             continue;
@@ -259,7 +354,7 @@ static void sync_task(void *arg)
         }
 
         clock_display_post_event(CLOCK_EVENT_TIME_SYNCED);
-        apply_sync(offset);
+        apply_sync(offset, location_succeeded);
         s_sync_active = false;
     }
 }

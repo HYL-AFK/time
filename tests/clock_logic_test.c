@@ -29,6 +29,13 @@ static void test_unix_time_conversion_keeps_milliseconds_continuous_across_secon
     assert(now.hour == 0 && now.minute == 0 && now.second == 0 && now.millisecond == 0);
 }
 
+static void test_utc_offset_prefers_fresh_location_then_saved_value_then_utc_plus_eight(void)
+{
+    assert(clock_select_utc_offset(false, 0, false, 0) == 28800);
+    assert(clock_select_utc_offset(true, 3600, false, 0) == 3600);
+    assert(clock_select_utc_offset(true, 3600, true, -18000) == -18000);
+}
+
 static void test_minute_hand_crossfades_at_the_midpoint(void)
 {
 #if ECLOCK_EFFECT_PREVIEW
@@ -227,6 +234,7 @@ int main(void)
     test_brightness_schedule();
     test_clock_hand_output_uses_the_twenty_percent_cap();
     test_unix_time_conversion_keeps_milliseconds_continuous_across_seconds();
+    test_utc_offset_prefers_fresh_location_then_saved_value_then_utc_plus_eight();
     test_minute_hand_crossfades_at_the_midpoint();
     test_minute_hand_uses_a_slow_ended_breathing_crossfade();
     test_hour_hand_changes_as_a_single_led();

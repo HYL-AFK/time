@@ -63,6 +63,8 @@ uint8_t clock_breathing_level(uint32_t elapsed_ms);
 uint8_t clock_fast_breathing_level(uint32_t elapsed_ms);
 uint8_t clock_boot_comet_head(uint32_t elapsed_ms);
 uint32_t clock_wifi_connect_timeout_ms(void);
+int32_t clock_select_utc_offset(bool has_saved_offset, int32_t saved_offset,
+                                bool has_fresh_offset, int32_t fresh_offset);
 void clock_time_from_elapsed_ms(uint64_t elapsed_ms, clock_time_t *out);
 void clock_time_from_unix_ms(int64_t utc_epoch_ms, int32_t utc_offset_seconds,
                              clock_time_t *out);

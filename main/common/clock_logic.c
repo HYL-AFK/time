@@ -22,6 +22,7 @@
 #define CLOCK_BREATHING_HALF_PERIOD_MS 800U
 #define CLOCK_BREATHING_PERIOD_MS (2U * CLOCK_BREATHING_HALF_PERIOD_MS)
 #define CLOCK_WIFI_CONNECT_TIMEOUT_MS 10000U
+#define CLOCK_DEFAULT_UTC_OFFSET_SECONDS (8 * 60 * 60)
 #define CLOCK_HAND_BREATHING_LUT_STEPS 16U
 #define CLOCK_HAND_OUTPUT_CAP_PERCENT 20U
 
@@ -103,6 +104,14 @@ uint8_t clock_boot_comet_head(uint32_t elapsed_ms)
 uint32_t clock_wifi_connect_timeout_ms(void)
 {
     return CLOCK_WIFI_CONNECT_TIMEOUT_MS;
+}
+
+int32_t clock_select_utc_offset(bool has_saved_offset, int32_t saved_offset,
+                                bool has_fresh_offset, int32_t fresh_offset)
+{
+    if (has_fresh_offset) return fresh_offset;
+    if (has_saved_offset) return saved_offset;
+    return CLOCK_DEFAULT_UTC_OFFSET_SECONDS;
 }
 
 void clock_time_from_elapsed_ms(uint64_t elapsed_ms, clock_time_t *out)
