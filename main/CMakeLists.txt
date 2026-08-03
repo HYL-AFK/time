@@ -1,0 +1,32 @@
+idf_component_register(
+    SRCS
+        "main.c"
+        "common/clock_logic.c"
+        "common/app_config.c"
+        "common/runtime_event_log.c"
+        "drivers/led_ring.c"
+        "drivers/led_ring_map.c"
+        "drivers/button.c"
+        "middle/wifi_manager.c"
+        "middle/time_service.c"
+        "middle/ble_provision.c"
+        "middle/blufi_security.c"
+        "app/clock_display.c"
+    INCLUDE_DIRS "." "common" "drivers" "middle" "app"
+    REQUIRES
+        app_update
+        bt
+        json
+        esp_event
+        esp_http_client
+        esp_hw_support
+        esp_netif
+        esp_timer
+        esp_wifi
+        led_strip
+        lwip
+        mbedtls
+        nvs_flash
+        esp_driver_gpio
+        esp_driver_rmt
+)
