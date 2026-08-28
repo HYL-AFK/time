@@ -15,6 +15,7 @@
 #include "freertos/task.h"
 
 #include "clock_display.h"
+#include "cx1000am.h"
 #include "ble_provision.h"
 #include "runtime_event_log.h"
 #include "wifi_manager.h"
@@ -221,6 +222,7 @@ static void apply_sync(int32_t utc_offset_seconds, bool persist_utc_offset)
 {
     s_utc_offset_seconds = utc_offset_seconds;
     s_time_valid = true;
+    if (s_daily_task != NULL) xTaskNotifyGive(s_daily_task);
     const esp_err_t save_err = persist_utc_offset
                                    ? app_config_save_utc_offset(&s_config, utc_offset_seconds)
                                    : ESP_OK;
@@ -359,20 +361,45 @@ static void sync_task(void *arg)
     }
 }
 
+static uint32_t seconds_until_daily_event(const struct tm *local)
+{
+    static const uint32_t event_seconds[] = {3U * 3600U, 9U * 3600U, 17U * 3600U};
+    const uint32_t current = (uint32_t)local->tm_hour * 3600U +
+                              (uint32_t)local->tm_min * 60U + (uint32_t)local->tm_sec;
+    for (size_t index = 0; index < sizeof(event_seconds) / sizeof(event_seconds[0]); ++index) {
+        if (event_seconds[index] > current) return event_seconds[index] - current;
+    }
+    return 24U * 3600U - current + event_seconds[0];
+}
+
 static void daily_task(void *arg)
 {
     (void)arg;
     int last_day = -1;
+    int last_report_day = -1;
+    int last_report_hour = -1;
     for (;;) {
         time_t raw = time(NULL) + s_utc_offset_seconds;
         struct tm local = {0};
         gmtime_r(&raw, &local);
+        if (!s_demo_time_active && s_time_valid && (local.tm_hour == 9 || local.tm_hour == 17) &&
+            local.tm_min == 0 &&
+            (local.tm_yday != last_report_day || local.tm_hour != last_report_hour)) {
+            last_report_day = local.tm_yday;
+            last_report_hour = local.tm_hour;
+            if (!cx1000am_report_hour((uint8_t)local.tm_hour)) {
+                ESP_LOGW(TAG, "CX1000AM report failed at %02d:00", local.tm_hour);
+            }
+        }
         if (!s_demo_time_active && s_time_valid && local.tm_hour == 3 && local.tm_min == 0 &&
             local.tm_yday != last_day) {
             last_day = local.tm_yday;
             time_service_start_sync();
         }
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        uint32_t wait_seconds = 60U;
+        if (!s_demo_time_active && s_time_valid) wait_seconds = seconds_until_daily_event(&local);
+        if (wait_seconds == 0U) wait_seconds = 1U;
+        (void)ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(wait_seconds * 1000U));
     }
 }
 

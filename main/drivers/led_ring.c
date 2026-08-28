@@ -2,8 +2,9 @@
 
 #include <string.h>
 
+#include "esp_log.h"
 #include "led_strip.h"
-#include "led_strip_rmt.h"
+#include "led_strip_spi.h"
 
 #include "led_ring_map.h"
 #include "runtime_event_log.h"
@@ -12,6 +13,25 @@ static led_strip_handle_t s_strip;
 static esp_err_t s_last_error = ESP_OK;
 static uint32_t s_error_count;
 static bool s_error_active;
+static const char *TAG = "led_ring";
+
+/* 使用 SPI 生成 WS2812 波形，实测可避免 RMT 后级级联时的偶发彩灯闪点。 */
+static void validate_mapping(void)
+{
+    bool seen[CLOCK_RING_LED_COUNT] = {0};
+    bool valid = true;
+    for (uint8_t logical = 0; logical < CLOCK_RING_LED_COUNT; ++logical) {
+        const uint8_t physical = led_ring_map_logical_to_physical(
+            logical, LED_RING_FIRST_PIXEL_OFFSET, LED_RING_CLOCKWISE);
+        if (physical >= CLOCK_RING_LED_COUNT || seen[physical]) {
+            ESP_LOGE(TAG, "invalid LED map: logical=%u physical=%u", logical, physical);
+            valid = false;
+        } else {
+            seen[physical] = true;
+        }
+    }
+    if (valid) ESP_LOGI(TAG, "LED map validated: %u unique pixels", CLOCK_RING_LED_COUNT);
+}
 
 static esp_err_t record_error(esp_err_t err, bool clear_strip)
 {
@@ -46,6 +66,7 @@ static uint8_t scale_channel(uint8_t value, uint8_t logical_brightness_percent,
 
 esp_err_t led_ring_init(void)
 {
+    validate_mapping();
     const led_strip_config_t strip_config = {
         .strip_gpio_num = LED_RING_DATA_GPIO,
         .max_leds = CLOCK_RING_LED_COUNT,
@@ -53,13 +74,13 @@ esp_err_t led_ring_init(void)
         .led_model = LED_MODEL_WS2812,
         .flags.invert_out = false,
     };
-    const led_strip_rmt_config_t rmt_config = {
-        .clk_src = RMT_CLK_SRC_DEFAULT,
-        .resolution_hz = 10U * 1000U * 1000U,
-        // A 24-pixel ring fits in RMT memory; ESP32-C3 does not need DMA here.
-        .flags.with_dma = false,
+    const led_strip_spi_config_t spi_config = {
+        .clk_src = SPI_CLK_SRC_DEFAULT,
+        .spi_bus = SPI2_HOST,
+        /* DMA 负责搬运整帧数据，减少 CPU 干预造成的时序抖动。 */
+        .flags.with_dma = true,
     };
-    esp_err_t err = led_strip_new_rmt_device(&strip_config, &rmt_config, &s_strip);
+    esp_err_t err = led_strip_new_spi_device(&strip_config, &spi_config, &s_strip);
     if (err != ESP_OK) return record_error(err, false);
     return record_error(led_strip_clear(s_strip), false);
 }

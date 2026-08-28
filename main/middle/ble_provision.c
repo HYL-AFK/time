@@ -25,7 +25,7 @@
 #include "time_service.h"
 #include "wifi_manager.h"
 
-#define BLE_WINDOW_US (5LL * 60LL * 1000LL * 1000LL)
+#define BLE_WINDOW_US (3LL * 60LL * 1000LL * 1000LL)
 
 static const char *TAG = "ble_provision";
 static bool s_stack_started;

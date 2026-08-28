@@ -6,10 +6,12 @@ Firmware for a 24-pixel WS2812 circular clock. The dial is logical-indexed from 
 
 - Wi-Fi uses saved credentials only for initial synchronization and daily synchronization at 03:00. Synchronization has a 15-second total budget and at most three association attempts.
 - Time is accepted only when SNTP and IP-derived UTC offset both succeed. The current UTC offset is stored in NVS and refreshed each day.
-- BluFi starts automatically at boot for a five-minute provisioning window named `ESPARK-ECLOCK-<MAC last 6 hex digits>`. A three-second BOOT hold cancels network work and reopens that window.
+- BluFi starts automatically at boot for a three-minute provisioning window named `ESPARK-ECLOCK-<MAC last 6 hex digits>`. A three-second BOOT hold cancels network work and reopens that window.
 - Boot animation is a seven-second clockwise white comet from 12 o'clock with a six-pixel tail. It always finishes before a connection status page is shown.
-- The hour hand is white and moves as one LED every 30 minutes. The minute hand is green and crossfades during the final second of every 2.5-minute step. Overlap is teal green.
-- Logical brightness is 100% from 06:00 through 21:00 and 40% from 21:01 through 05:59. The LED driver limits full logical output to 10% electrical RGB output.
+- The hour hand is white and moves two LEDs on each hour, with a 1.2-second comet at the hour change. The minute hand is green and crossfades during the final second of every 2.5-minute step. Overlap is teal green.
+- Logical brightness is 88% from 06:00 through 21:00 and 15% from 21:01 through 05:59. The LED driver limits full logical output to 10% electrical RGB output. All logical output is physically rotated 90 degrees counterclockwise on the ring; logical index 0 remains the 12 o'clock reference in firmware.
+- In the normal clock page, logical index 6 is reserved as a breathing status indicator: green for working mode, cyan while time calibration is running, and latched red after a network/time-sync or LED refresh failure. Boot, provisioning, and sync status pages keep their existing full-ring effects. Audio-module errors are currently excluded until the module is connected.
+- The normal clock display uses 100 FPS during the hour comet and minute hand transition, 10 FPS for the status indicator, and about 1 FPS when no clock animation is active. ESP-IDF power management and automatic FreeRTOS light sleep are enabled.
 
 ## Temporary Demo Mode
 
@@ -22,7 +24,7 @@ Firmware for a 24-pixel WS2812 circular clock. The dial is logical-indexed from 
 
 This path does not start BluFi, advertise Bluetooth, connect Wi-Fi, request IP location, or start SNTP. It also ignores the daily 03:00 sync trigger. Set `ECLOCK_DEMO_MODE` to `1` only to exercise this path, then restore it to `0` for the real WiTime provisioning and synchronization flow.
 
-With real mode enabled, the ring breathes blue while waiting for BluFi, green quickly after Bluetooth connects while Wi-Fi credentials are expected, and green at the normal rate while associating (up to ten seconds). After association, the cyan page covers a Baidu connectivity ping of up to three packets (700 ms each; the first reply proceeds immediately), SNTP (up to five seconds), and IP timezone lookup (up to three seconds), in that order. The serial log identifies the failing stage. Success is a same-color double flash followed by one second of solid color; time-sync success is solid cyan for one second before the normal clock resumes. Wi-Fi and sync failures breathe red for one second and return to blue provisioning. A five-minute BLE timeout breathes purple for one second, clears the ring, and enters deep sleep; use the physical reset or power-cycle the device to start again.
+With real mode enabled, the ring breathes blue while waiting for BluFi, green quickly after Bluetooth connects while Wi-Fi credentials are expected, and green at the normal rate while associating (up to ten seconds). After association, the cyan page covers a Baidu connectivity ping of up to three packets (700 ms each; the first reply proceeds immediately), SNTP (up to five seconds), and IP timezone lookup (up to three seconds), in that order. The serial log identifies the failing stage. Success is a same-color double flash followed by one second of solid color; time-sync success is solid cyan for one second before the normal clock resumes. Wi-Fi and sync failures breathe red for one second and return to blue provisioning. A three-minute BLE timeout breathes purple for one second, clears the ring, and enters deep sleep; use the physical reset or power-cycle the device to start again.
 
 ## First hardware calibration
 

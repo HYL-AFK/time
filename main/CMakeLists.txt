@@ -9,6 +9,7 @@ idf_component_register(
         "drivers/button.c"
         "middle/wifi_manager.c"
         "middle/time_service.c"
+        "middle/cx1000am.c"
         "middle/ble_provision.c"
         "middle/blufi_security.c"
         "app/clock_display.c"
@@ -28,5 +29,6 @@ idf_component_register(
         mbedtls
         nvs_flash
         esp_driver_gpio
-        esp_driver_rmt
+        esp_driver_spi
+        esp_driver_uart
 )
