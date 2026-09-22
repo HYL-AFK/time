@@ -9,7 +9,7 @@ idf_component_register(
         "drivers/button.c"
         "middle/wifi_manager.c"
         "middle/time_service.c"
-        "middle/cx1000am.c"
+        "middle/lu6288.c"
         "middle/ble_provision.c"
         "middle/blufi_security.c"
         "app/clock_display.c"
