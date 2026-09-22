@@ -10,7 +10,7 @@
 #include "ble_provision.h"
 #include "button.h"
 #include "clock_display.h"
-#include "lu6288.h"
+#include "asrpro.h"
 #include "runtime_event_log.h"
 #include "time_service.h"
 #include "wifi_manager.h"
@@ -52,9 +52,9 @@ void app_main(void)
     app_config_t config = {0};
     ESP_ERROR_CHECK(app_config_init(&config));
     ESP_ERROR_CHECK(clock_display_init());
-    if (lu6288_init() != ESP_OK) {
+    if (asrpro_init() != ESP_OK) {
         // 音频模块不是时钟启动的硬依赖，未接模块时仍允许灯环正常工作。
-        ESP_LOGW("main", "LU6288 audio module unavailable");
+        ESP_LOGW("main", "ASRPRO module unavailable");
     }
     ESP_ERROR_CHECK(time_service_init(&config, finish_ble_session));
 #if !ECLOCK_DEMO_MODE

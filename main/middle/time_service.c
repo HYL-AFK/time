@@ -16,7 +16,7 @@
 #include "freertos/task.h"
 
 #include "clock_display.h"
-#include "lu6288.h"
+#include "asrpro.h"
 #include "ble_provision.h"
 #include "runtime_event_log.h"
 #include "wifi_manager.h"
@@ -29,6 +29,11 @@
 #define INTERNET_CHECK_ATTEMPTS 2U
 #define INTERNET_CHECK_RETRY_MS 300U
 #define SNTP_TIMEOUT_US (8LL * 1000LL * 1000LL)
+
+/* 整点时由 ASRPRO 播放的 TF 卡音频序号(1 起)。
+ * 默认播放第 1 首(整点提示音/背景乐)。若要逐点报时, 可改为 (local.tm_hour + 1),
+ * 并在 TF 卡按 0..23 点顺序放入 24 条报时音频。 */
+#define ASRPRO_HOURLY_REPORT_INDEX 1U
 
 static const char *TAG = "time_service";
 
@@ -381,15 +386,15 @@ static void daily_task(void *arg)
         time_t raw = time(NULL) + s_utc_offset_seconds;
         struct tm local = {0};
         gmtime_r(&raw, &local);
-        // 每小时整点播报当前时间（进入新小时且在 0 分内触发一次）。
+        // 每小时整点触发一次提示音(由 ASRPRO 播放 TF 卡中预置的音频)。
         if (!s_demo_time_active && s_time_valid && local.tm_min == 0 &&
             (local.tm_yday != last_report_day || local.tm_hour != last_report_hour)) {
             last_report_day = local.tm_yday;
             last_report_hour = local.tm_hour;
-            ESP_LOGI(TAG, "LU6288 hourly report at %04d-%03d %02d:00",
+            ESP_LOGI(TAG, "ASRPRO hourly report at %04d-%03d %02d:00",
                      local.tm_year + 1900, local.tm_yday + 1, local.tm_hour);
-            if (lu6288_report_hour((uint8_t)local.tm_hour) != ESP_OK) {
-                ESP_LOGW(TAG, "LU6288 hourly report failed at %02d:00", local.tm_hour);
+            if (asrpro_play(ASRPRO_HOURLY_REPORT_INDEX) != ESP_OK) {
+                ESP_LOGW(TAG, "ASRPRO hourly report failed at %02d:00", local.tm_hour);
             }
         }
         if (!s_demo_time_active && s_time_valid && local.tm_hour == 3 && local.tm_min == 0 &&
