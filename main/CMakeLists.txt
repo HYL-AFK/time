@@ -10,6 +10,7 @@ idf_component_register(
         "middle/wifi_manager.c"
         "middle/time_service.c"
         "middle/asrpro.c"
+        "middle/link_probe.c"
         "middle/ble_provision.c"
         "middle/blufi_security.c"
         "app/clock_display.c"

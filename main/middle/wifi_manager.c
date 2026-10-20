@@ -158,39 +158,16 @@ esp_err_t wifi_manager_start(void)
         s_started = false;
         (void)runtime_event_log_append(RUNTIME_EVENT_WIFI_FAILURE, (int32_t)err, 0, 0);
     } else {
-        const esp_err_t ps_err = esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+        /* 关掉省电:BLE 共存时 MODEM sleep 会延迟收包,把 DHCP 拖到 3 秒以上。
+         * 这是插电设备,多耗点电无所谓,换更快的关联和更稳的拿 IP。 */
+        const esp_err_t ps_err = esp_wifi_set_ps(WIFI_PS_NONE);
         if (ps_err != ESP_OK) {
-            ESP_LOGW(TAG, "Wi-Fi modem sleep setup failed: %s", esp_err_to_name(ps_err));
+            ESP_LOGW(TAG, "Wi-Fi power save setup failed: %s", esp_err_to_name(ps_err));
         }
-        wifi_scan_config_t scan = {0};
-        if (esp_wifi_scan_start(&scan, true) == ESP_OK) {
-            uint16_t count = 0;
-            if (esp_wifi_scan_get_ap_num(&count) == ESP_OK && count != 0) {
-                wifi_ap_record_t *records = calloc(count, sizeof(*records));
-                if (records != NULL && esp_wifi_scan_get_ap_records(&count, records) == ESP_OK) {
-                    uint8_t ordered[APP_WIFI_PROFILE_MAX];
-                    int8_t rssis[APP_WIFI_PROFILE_MAX];
-                    for (uint8_t i = 0; i < s_candidate_count; ++i) {
-                        ordered[i] = s_candidates[i]; rssis[i] = -127;
-                        for (uint16_t j = 0; j < count; ++j) {
-                            if (strcmp((char *)records[j].ssid,
-                                       s_config.wifi_profiles[ordered[i]].ssid) == 0 &&
-                                records[j].rssi > rssis[i]) rssis[i] = records[j].rssi;
-                        }
-                    }
-                    for (uint8_t i = 0; i < s_candidate_count; ++i) {
-                        for (uint8_t j = i + 1U; j < s_candidate_count; ++j) {
-                            if (rssis[j] > rssis[i]) {
-                                const uint8_t ci = ordered[i]; ordered[i] = ordered[j]; ordered[j] = ci;
-                                const int8_t ri = rssis[i]; rssis[i] = rssis[j]; rssis[j] = ri;
-                            }
-                        }
-                    }
-                    memcpy(s_candidates, ordered, s_candidate_count);
-                }
-                free(records);
-            }
-        }
+        /* 这里原本有一次阻塞的全信道扫描,用来按 RSSI 给候选 SSID 排序。
+         * 实测在 BLE 共存下要 6.9 秒,吃掉了 30 秒连接超时的近四分之一;
+         * 而候选 profile 通常只有一两个,排序收益几乎为零 —— 直接连。
+         * 连不上会自动重试,3 次失败后换下一个候选(见 handle_event)。 */
         if (configure_candidate() != ESP_OK) {
             notify_failure(ESP_FAIL);
             return ESP_FAIL;

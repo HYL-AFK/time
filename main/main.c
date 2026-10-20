@@ -11,6 +11,11 @@
 #include "button.h"
 #include "clock_display.h"
 #include "asrpro.h"
+#include "link_probe.h"
+
+/* 阶段 1：只跑链路握手，不启动业务通信。
+ * 两边固件都验证通过后改回 0 即可恢复原有功能。 */
+#define LINK_TEST_MODE 1
 #include "runtime_event_log.h"
 #include "time_service.h"
 #include "wifi_manager.h"
@@ -52,10 +57,16 @@ void app_main(void)
     app_config_t config = {0};
     ESP_ERROR_CHECK(app_config_init(&config));
     ESP_ERROR_CHECK(clock_display_init());
+#if LINK_TEST_MODE
+    if (link_probe_init() != ESP_OK) {
+        ESP_LOGW("main", "link probe unavailable");
+    }
+#else
     if (asrpro_init() != ESP_OK) {
         // 音频模块不是时钟启动的硬依赖，未接模块时仍允许灯环正常工作。
         ESP_LOGW("main", "ASRPRO module unavailable");
     }
+#endif
     ESP_ERROR_CHECK(time_service_init(&config, finish_ble_session));
 #if !ECLOCK_DEMO_MODE
     ESP_ERROR_CHECK(ble_provision_init(&config));
