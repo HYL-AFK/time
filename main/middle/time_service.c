@@ -1186,6 +1186,20 @@ static void speak_boot_greeting(void)
     uint16_t ids[ASRPRO_SAY_MAX];
     size_t n = 0U;
 
+    /* ASRPRO 上电后会自己播一句欢迎词（「欢迎使用语音助手，用小爱同学唤醒我」），
+     * 它要等自己的初始化跑完（约 3~5 s）才开始播，长度约 3~4 s。
+     * 而 ESP32 连 WiFi + SNTP 有时只要 3 s，问候会抢在欢迎词前面开口，
+     * 然后被欢迎词直接盖掉 —— 听感就是“报时刚出来就跳到欢迎词”。
+     * 统一等到上电后 12 s 再播，让欢迎词先说完。
+     * esp_timer_get_time() 从芯片启动开始计时，所以这里算的是“上电后多久”。 */
+    const int64_t since_boot_us = esp_timer_get_time();
+    const int64_t wait_us = 12LL * 1000 * 1000 - since_boot_us;
+    if (wait_us > 0) {
+        ESP_LOGI(TAG, "boot greeting waits %lld ms for ASRPRO welcome",
+                 (long long)(wait_us / 1000));
+        vTaskDelay(pdMS_TO_TICKS(wait_us / 1000));
+    }
+
     const time_t raw = time(NULL) + s_utc_offset_seconds;
     struct tm local = {0};
     gmtime_r(&raw, &local);
