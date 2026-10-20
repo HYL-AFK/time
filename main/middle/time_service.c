@@ -168,6 +168,10 @@ static volatile bool s_sync_attempted;
 /* 整点报时自测:校时成功后 15 秒播一次,验证语音链路不用等整点。 */
 static bool s_hourly_selftest_done;
 static time_t s_selftest_base_epoch;
+/* 开机问候只播一次。校时成功、天气也取到之后说一遍
+ * 「早上好，现在是 X点Y分，今天…」。凌晨 3 点的自动校时也走 apply_sync，
+ * 用这个标志挡住，不然半夜会突然开口报时。 */
+static bool s_boot_greeted;
 static esp_timer_handle_t s_alarm_speak_timer;
 /* 闹钟:ASRPRO 回调只置标志,daily_task 负责写 NVS / 播铃 / 停铃。
  * 两个槽位;"每天"型到点响一次后往后滚 86400 继续响,"今天/明天"型响完即清。 */
@@ -428,6 +432,10 @@ static bool wait_for_sntp(int64_t deadline_us)
     return false;
 }
 
+/* 定义在后面（要用 greeting_period_of / append_weather_summary），
+ * 但 apply_sync 里要调用，先声明。 */
+static void speak_boot_greeting(void);
+
 static void apply_sync(int32_t utc_offset_seconds, bool persist_utc_offset)
 {
     s_utc_offset_seconds = utc_offset_seconds;
@@ -447,6 +455,13 @@ static void apply_sync(int32_t utc_offset_seconds, bool persist_utc_offset)
     (void)wifi_manager_stop();
     clock_display_request_refresh();
     if (s_on_finished != NULL) s_on_finished();
+
+    /* 上电后第一轮校时成功、天气已经取到（weather_refresh 在调用本函数之前跑完），
+     * 主动播一次问候。走 T_ANNOUNCE，不会把设备拉进 20 秒唤醒态。 */
+    if (!s_boot_greeted) {
+        s_boot_greeted = true;
+        speak_boot_greeting();
+    }
 }
 
 /* 城市名 -> 播报片段。key 是**归一化后**的名字(小写拼音或中文),
@@ -1157,6 +1172,47 @@ static void speak_hourly_report(int hour)
 
     ESP_LOGI(TAG, "hourly report %02d:00 (%u segments, weather=%d)", hour, (unsigned)n,
              (int)s_weather_valid);
+    (void)asrpro_announce(ids, n);
+}
+
+/* 开机问候：校时成功、天气也取到之后主动播一次。
+ *   「早上好 / 上午好 / 下午好 / 晚上好，现在是 X 点 Y 分，今天<城市>天气…」
+ * 由 apply_sync() 在开机第一轮校时结束时调用，只播一次。
+ * 走 asrpro_announce() -> T_ANNOUNCE：用户没说话，机器自己开口，
+ * 不能把设备拉进 20 秒唤醒态，否则播完会冒一句"我退下了"。
+ * 天气没缓存（HTTP 失败/IP 定位失败）就跳过天气那一段，问候和时间照旧。 */
+static void speak_boot_greeting(void)
+{
+    uint16_t ids[ASRPRO_SAY_MAX];
+    size_t n = 0U;
+
+    const time_t raw = time(NULL) + s_utc_offset_seconds;
+    struct tm local = {0};
+    gmtime_r(&raw, &local);
+
+    ids[n++] = greeting_period_of(local.tm_hour);   /* 早上/上午/下午/晚上 */
+    ids[n++] = (uint16_t)SPK_GREET_GOOD;            /* 好 */
+
+    ids[n++] = (uint16_t)SPK_NOW;                   /* 现在是 */
+    const int hour12 = (local.tm_hour % 12 == 0) ? 12 : (local.tm_hour % 12);
+    n = append_number(ids, n, hour12);
+    ids[n++] = (uint16_t)SPK_POINT;                 /* 点 */
+    if (local.tm_min == 0) {
+        ids[n++] = (uint16_t)SPK_OCLOCK;            /* 整 */
+    } else {
+        /* 不足 10 分要补"零"：八点零五分，不能说成八点五分。 */
+        if (local.tm_min < 10) ids[n++] = (uint16_t)SPK_DIGIT_BASE;
+        n = append_number(ids, n, local.tm_min);
+        ids[n++] = (uint16_t)SPK_MINUTE;            /* 分 */
+    }
+
+    if (s_weather_valid || WEATHER_DEBUG_FORCE) {
+        ids[n++] = (uint16_t)SPK_ALARM_TODAY;       /* 今天 */
+        n = append_weather_summary(ids, n);
+    }
+
+    ESP_LOGI(TAG, "boot greeting %02d:%02d (%u segments, weather=%d)", local.tm_hour,
+             local.tm_min, (unsigned)n, (int)s_weather_valid);
     (void)asrpro_announce(ids, n);
 }
 
