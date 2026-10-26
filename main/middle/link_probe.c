@@ -8,8 +8,10 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "time_service.h"
+#include "timer_service.h"
 
 /* ============================================================================
  * 链路层测试（阶段 1）
@@ -42,8 +44,13 @@
 #define T_ASK_TIME     0x30
 #define T_ASK_WEATHER  0x31
 #define T_ALARM_SET    0x32
-#define T_ALARM_PICK   0x33
 #define T_ALARM_OFF    0x34
+#define T_ALARM_FULL   0x35   /* ESP32 告知两个槽位已满，ASRPRO 播提示并进入取消确认 */
+#define T_TIMER_START       0x40   /* 正计时开始 */
+#define T_TIMER_STOP        0x41   /* 正计时停止，ESP32 拼时长播报 */
+#define T_TIMER_CANCEL      0x42   /* 取消计时 */
+#define T_COUNTDOWN_SET     0x43   /* 载荷: 秒数(2B 大端) */
+#define T_COUNTDOWN_CANCEL  0x44   /* 取消倒计时 */
 
 /* E -> A */
 #define T_PONG         0x80
@@ -73,9 +80,13 @@ static const uint8_t kTail[2] = { 0x43, 0x21 };
 
 static link_status_t s_status;
 static uint8_t       s_seq;            /* 帧序号，每发一帧自增 */
+/* 心跳任务、接收任务、timer_task 都会发帧，s_seq 和 UART 写入必须串行，
+ * 否则会出现重复 SEQ、以及两帧字节交错的脏帧。 */
+static SemaphoreHandle_t s_tx_mutex;
 static int           s_miss;
 static uint32_t      s_last_tx_ms;     /* 最近一次发送时刻，用来算 rtt */
 static uint8_t       s_last_pong_seq;  /* 最近一次回包带回的 SEQ */
+static link_state_cb_t s_state_cb;     /* 状态变化回调，用于灯环异常提示 */
 
 /* 最近一次 WAKE/SLEEP 请求的回包等待 */
 static volatile int  s_resp_flag;
@@ -98,29 +109,39 @@ static uint32_t now_ms(void)
     return (uint32_t)(esp_timer_get_time() / 1000);
 }
 
-/* ===== 组装并发送变长帧 ===== */
+/* ===== 组装并发送定长帧 =====
+ * 载荷固定 PAYLOAD_MAX(48) 字节，不足补 0，LEN 恒为 53、整帧恒为 57 字节。
+ * 定长的好处：两端都不需要先读 LEN 才能确定边界，收到 53 54 后
+ * 直接按 57 字节收满就能解，不会因为某帧 LEN 错一位而丢一片数据。 */
 static esp_err_t send_frame(uint8_t type, const uint8_t *pl, uint8_t n)
 {
     if (n > PAYLOAD_MAX) n = PAYLOAD_MAX;
 
+    if (s_tx_mutex != NULL) xSemaphoreTake(s_tx_mutex, portMAX_DELAY);
+
     uint8_t f[FRAME_MAX];
     f[0] = kHead[0];
     f[1] = kHead[1];
-    f[2] = (uint8_t)(n + 5);       /* LEN */
-    f[3] = s_seq++;                /* SEQ */
+    f[2] = (uint8_t)(PAYLOAD_MAX + 5);   /* LEN 固定 53 */
+    f[3] = s_seq++;                      /* SEQ */
     f[4] = type;
+    /* 载荷补 0xFF：SAY 类载荷是 16 位片段 ID，0 可能是合法 ID，
+     * 用 0xFFFF 补齐，ASRPRO 收到就能识别出“后面没有更多片段”并停。 */
+    for (uint8_t i = 0; i < PAYLOAD_MAX; i++) f[5 + i] = 0xFF;
     for (uint8_t i = 0; i < n; i++) f[5 + i] = (pl != NULL) ? pl[i] : 0;
 
-    const uint16_t c = crc16_modbus(f + 2, n + 3);
-    f[5 + n] = (uint8_t)(c & 0xFF);
-    f[6 + n] = (uint8_t)((c >> 8) & 0xFF);
-    f[7 + n] = kTail[0];
-    f[8 + n] = kTail[1];
+    const uint16_t c = crc16_modbus(f + 2, PAYLOAD_MAX + 3);
+    f[5 + PAYLOAD_MAX] = (uint8_t)(c & 0xFF);
+    f[6 + PAYLOAD_MAX] = (uint8_t)((c >> 8) & 0xFF);
+    f[7 + PAYLOAD_MAX] = kTail[0];
+    f[8 + PAYLOAD_MAX] = kTail[1];
 
-    const int total = n + 9;
+    const int total = PAYLOAD_MAX + 9;   /* 57 */
     s_last_tx_ms = now_ms();
-    return uart_write_bytes(LINK_UART_NUM, (const char *)f, total) == total
-           ? ESP_OK : ESP_FAIL;
+    const esp_err_t err = uart_write_bytes(LINK_UART_NUM, (const char *)f, total) == total
+                          ? ESP_OK : ESP_FAIL;
+    if (s_tx_mutex != NULL) xSemaphoreGive(s_tx_mutex);
+    return err;
 }
 
 /* ===== 片段 ID 表(与 ASRPRO 词表一一对应) ===== */
@@ -249,13 +270,46 @@ esp_err_t link_probe_announce(const uint16_t *ids, int count)
     return send_ids(T_ANNOUNCE, ids, count);
 }
 
-/* ===== 解析变长回包 ===== */
+/* 播放 TF 卡根目录的音频文件（整点报时的 001~012、闹钟铃声 101）。
+ * 载荷只有 1 字节文件序号，ASRPRO 侧调 playMp3Folder(0, n)。
+ * 以前的 asrpro_play() 走 ASCII "P<n>"，但 LINK_TEST_MODE 下 asrpro_init()
+ * 根本不会执行（跟 link_probe 互斥），所以那条路一直是静默失败。 */
+esp_err_t link_probe_play(uint8_t index)
+{
+    if (index == 0U) return ESP_ERR_INVALID_ARG;
+    ESP_LOGI(TAG, "play file %u", (unsigned)index);
+    return send_frame(T_PLAY, &index, 1);
+}
+
+esp_err_t link_probe_stop(void)
+{
+    ESP_LOGI(TAG, "stop playback");
+    return send_frame(T_STOP, NULL, 0);
+}
+
+/* 音量 0~100。短按 BOOT 静音就是调 0，之后还能恢复。 */
+esp_err_t link_probe_set_volume(uint8_t volume)
+{
+    if (volume > 100U) return ESP_ERR_INVALID_ARG;
+    ESP_LOGI(TAG, "volume %u", (unsigned)volume);
+    return send_frame(T_VOL, &volume, 1);
+}
+
+/* 两个闹钟槽位都满了：让 ASRPRO 播“已帮你找到两个…需要帮你取消闹钟”，
+ * 同时进入“是否全部取消”的确认状态。 */
+esp_err_t link_probe_alarm_full(void)
+{
+    ESP_LOGI(TAG, "alarm slots full");
+    return send_frame(T_ALARM_FULL, NULL, 0);
+}
+
+/* ===== 解析定长回包（载荷恒为 PAYLOAD_MAX 字节） ===== */
 static bool parse_response(const uint8_t *f)
 {
     if (f[0] != kHead[0] || f[1] != kHead[1]) return false;
 
-    const uint8_t n = (uint8_t)(f[2] - 5);
-    if (n > PAYLOAD_MAX) return false;
+    const uint8_t n = (uint8_t)PAYLOAD_MAX;   /* 定长：不再从 LEN 推导 */
+    if (f[2] != (uint8_t)(PAYLOAD_MAX + 5)) return false;
     if (f[7 + n] != kTail[0] || f[8 + n] != kTail[1]) return false;
 
     const uint16_t want = (uint16_t)f[5 + n] | ((uint16_t)f[6 + n] << 8);
@@ -265,18 +319,18 @@ static bool parse_response(const uint8_t *f)
     }
 
     /* ---- 业务请求:ASRPRO 上报,ESP32 回一段 SAY ---- */
+    /* 只置标志，由 time_service 的 daily_task 播报：
+     * 在接收任务里直接 asrpro_say() 会等 PONG，而 PONG 也得这个任务读，会自锁。 */
     if (f[4] == T_ASK_TIME) {
         ESP_LOGI(TAG, "peer asks TIME");
-        (void)link_probe_say_time();
+        time_service_request_time();
         return true;
     }
 
     if (f[4] == T_ASK_WEATHER) {
-        /* 直接复用 time_service 里现成的拼接逻辑(城市 + 天气现象 + 转 +
-         * 最高/最低 + 度)，它内部调 asrpro_say() → link_probe_send_say() →
-         * 同一条 T_SAY 出口。天气缓存由校时成功时预先拉取，这里不联网。 */
+        /* 天气缓存由校时成功时预先拉取，这里不联网。 */
         ESP_LOGI(TAG, "peer asks WEATHER");
-        time_service_speak_weather();
+        time_service_request_weather();
         return true;
     }
 
@@ -290,15 +344,41 @@ static bool parse_response(const uint8_t *f)
         return true;
     }
 
-    if (f[4] == T_ALARM_PICK && n >= 1) {
-        ESP_LOGI(TAG, "peer picks alarm slot %u", (unsigned)f[5]);
-        time_service_on_alarm_pick(f[5]);
-        return true;
-    }
-
     if (f[4] == T_ALARM_OFF) {
         ESP_LOGI(TAG, "peer clears alarms");
         time_service_on_alarm_off();
+        return true;
+    }
+
+    /* ---- 计时器 ---- */
+    if (f[4] == T_TIMER_START) {
+        ESP_LOGI(TAG, "peer starts stopwatch");
+        timer_service_start_countup();
+        return true;
+    }
+
+    if (f[4] == T_TIMER_STOP) {
+        ESP_LOGI(TAG, "peer stops stopwatch");
+        timer_service_stop_countup();
+        return true;
+    }
+
+    if (f[4] == T_TIMER_CANCEL) {
+        ESP_LOGI(TAG, "peer cancels stopwatch");
+        timer_service_cancel();
+        return true;
+    }
+
+    if (f[4] == T_COUNTDOWN_SET && n >= 2) {
+        const uint16_t seconds = ((uint16_t)f[5] << 8) | (uint16_t)f[6];
+        ESP_LOGI(TAG, "peer sets countdown %u s", (unsigned)seconds);
+        timer_service_start_countdown(seconds);
+        return true;
+    }
+
+    if (f[4] == T_COUNTDOWN_CANCEL) {
+        ESP_LOGI(TAG, "peer cancels countdown");
+        timer_service_cancel_countdown();
         return true;
     }
 
@@ -315,6 +395,11 @@ static bool parse_response(const uint8_t *f)
     s_last_pong_seq = f[3];
     s_resp_flag = 1;
     return true;
+}
+
+void link_probe_set_state_callback(link_state_cb_t cb)
+{
+    s_state_cb = cb;
 }
 
 const char *link_state_name(link_state_t s)
@@ -409,9 +494,11 @@ static void link_hb_task(void *arg)
             if (s_status.state == LINK_STATE_INIT || s_status.state == LINK_STATE_OFFLINE) {
                 ESP_LOGI(TAG, "state -> LINK");
                 s_status.state = LINK_STATE_LINK;
+                if (s_state_cb != NULL) s_state_cb(s_status.state);
             } else if (s_status.state == LINK_STATE_LINK) {
                 ESP_LOGI(TAG, "state -> READY");
                 s_status.state = LINK_STATE_READY;
+                if (s_state_cb != NULL) s_state_cb(s_status.state);
             }
 
             /* 只在数据有变化时打印，避免每秒刷屏 */
@@ -431,6 +518,7 @@ static void link_hb_task(void *arg)
                     ESP_LOGE(TAG, "state -> OFFLINE (3 misses, %u timeouts)",
                              (unsigned)s_status.timeout_count);
                     s_status.state = LINK_STATE_OFFLINE;
+                    if (s_state_cb != NULL) s_state_cb(s_status.state);
                 }
             }
         }
@@ -475,6 +563,8 @@ esp_err_t link_probe_init(void)
 {
     if (s_status.state != LINK_STATE_INIT) return ESP_OK;
     s_status.state = LINK_STATE_INIT;
+
+    if (s_tx_mutex == NULL) s_tx_mutex = xSemaphoreCreateMutex();
 
     const uart_config_t cfg = {
         .baud_rate  = LINK_UART_BAUD,

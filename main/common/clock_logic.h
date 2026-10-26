@@ -54,7 +54,11 @@ typedef enum {
     CLOCK_EVENT_TIME_SYNCING,
     CLOCK_EVENT_TIME_SYNCED,
     CLOCK_EVENT_BLE_TIMEOUT,
-    CLOCK_EVENT_SYNC_FAILED,
+    CLOCK_EVENT_SYNC_FAILED,       /* 保留：未知/未分类的同步失败 */
+    CLOCK_EVENT_NETWORK_FAILED,    /* 网络异常：无凭据 / WiFi 连不上 / 连上但上不了网 */
+    CLOCK_EVENT_DATA_FAILED,       /* 数据异常：SNTP 校时 / 定位 / 天气拿不到 */
+    CLOCK_EVENT_LINK_OFFLINE,      /* 模组链路断开（心跳连续丢失）：红色呼吸，持续到恢复 */
+    CLOCK_EVENT_LINK_RESTORED,     /* 模组链路恢复：撤掉红色呼吸 */
     /* Kept for the disabled demo path and source compatibility. */
     CLOCK_EVENT_BLE_CONNECTING,
     CLOCK_EVENT_DEMO_READY,

@@ -39,3 +39,7 @@ esp_err_t asrpro_say(const uint16_t *ids, size_t count);
 /* 主动播报(整点报时 / 开机问候)：同样是一串片段 ID，但走 T_ANNOUNCE，
  * ASRPRO 只播不改唤醒态。 */
 esp_err_t asrpro_announce(const uint16_t *ids, size_t count);
+
+/* 两个闹钟槽位已满：让 ASRPRO 播“已帮你找到两个…需要帮你取消闹钟”，
+ * 并进入“是否全部取消”的确认状态。 */
+esp_err_t asrpro_alarm_full(void);

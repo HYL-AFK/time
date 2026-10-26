@@ -39,9 +39,9 @@
 #define SYNC_RETRY_LIMIT 8U
 
 /* 整点报时自测:校时成功后 N 秒先播一次,不用等到真正整点。
- * 功能已验收,改回 0 —— 否则每次上电/重启都会在 15 秒后再响一遍,
+ * 功能已验收,改回 0 —— 否则每次上电/重启都会在 30 秒后再响一遍,
  * 叠在真正的整点报时上,听起来就是"一直在响"。
- * 以后再要验证语音链路,临时改回 15 即可。 */
+ * 以后再要验证语音链路,临时改成 30 即可。 */
 #define HOURLY_SELFTEST_SECONDS 0
 
 /* 闹钟铃声:TF 卡 101.mp3。 */
@@ -58,6 +58,8 @@
  * 触发词的 ASRTO 已经播了"现在时间是",所以这里只需补"X点Y分"。 */
 #define SPK_POINT 120U           /* 点 */
 #define SPK_MINUTE 121U          /* 分 */
+#define SPK_SECOND 431U          /* 秒（计时器播报时长用） */
+#define SPK_TIMER_PREFIX 437U    /* 这次计时时间为（计时结束的开头语） */
 #define SPK_OCLOCK 122U          /* 整(整点用,不说"零分") */
 #define SPK_DIGIT_BASE 123U      /* 123~132 = 零~九 */
 #define SPK_TEN 133U             /* 十 */
@@ -78,10 +80,8 @@
 #define SPK_PERIOD_DAWN 82U       /* 凌晨 */
 #define SPK_ALARM_TAIL_DAILY 83U  /* 的时候都会叫你 */
 #define SPK_ALARM_TAIL_ONCE 84U   /* 的时候叫你一次 */
-#define SPK_ALARM_FULL 85U        /* 已经设了两个闹钟了 */
-#define SPK_ALARM_SLOT1 86U       /* 第一个是 */
-#define SPK_ALARM_SLOT2 87U       /* 第二个是 */
-#define SPK_ALARM_WHICH 88U       /* 要替换哪一个？ */
+#define SPK_ALARM_SAVE_FAILED 411U /* 闹钟没存上，请再说一遍 */
+#define SPK_ALARM_OK 135U          /* 好的，已经帮你设定好闹钟了 */
 /* ===== 闹钟响铃播报的片段(ID 与 ASRPRO 词表一一对应) =====
  * 响铃时一边放 TF 卡 101.mp3(板载 MP3,一直响到喊停),一边由 ASRPRO 播这句:
  *   问候 + 现在时间是 + X点Y分 + <城市>天气 + 现象 + 最高X度 + 最低Y度 + 记得按时起床哦
@@ -94,7 +94,7 @@
  * 直接用 30:它的 ASRTO 就是「现在时间是」,现成有音频、CMDTBL valid=1,
  * 问"现在几点"走的也是它。比"现在是"多两个字,但语意更完整。 */
 #define SPK_NOW SPK_TIME_NOW
-#define SPK_GREET_GOOD 250U       /* 好(复用"大声点"的回复音) */
+#define SPK_GREET_GOOD 250U       /* 好（250 的回复音，不能改：音量反馈用 254/255） */
 #define SPK_ALARM_WAKEUP 402U     /* 记得按时起床哦 */
 
 /* 断电/离线期间错过的闹钟:超过这个秒数就当作陈旧记录丢弃,不补响 ——
@@ -117,6 +117,15 @@
 #define SPK_BELOW_ZERO 159U      /* 零下 */
 #define SPK_NO_WEATHER 160U      /* 天气还没更新 */
 #define SPK_TURN 161U            /* 转(用于"晴转多云") */
+
+/* ===== 天气句子里的补充片段（需与 ASRPRO 固件 403~408 一一对应） =====
+ * 四大类归并后需要单独的“雨/雪”，以及“气温 / 到 / 摄氏度”。
+ * 城市片段自带“天气”后缀（如 175=杭州天气），所以不需要“天气是”。 */
+#define SPK_WEATHER_RAIN 403U    /* 雨 */
+#define SPK_WEATHER_SNOW 404U    /* 雪 */
+#define SPK_AIR_TEMP 405U        /* 气温 */
+#define SPK_CELSIUS 406U         /* 摄氏度 */
+#define SPK_TEMP_RANGE 408U      /* 到（温度区间） */
 
 /* ===== 城市名片段:说哪个城市由 IP 定位结果决定 =====
  * 城市音频必须提前合成(ASRPRO 无 TTS),所以词表里预置了一批城市片段,
@@ -172,6 +181,23 @@ static time_t s_selftest_base_epoch;
  * 「早上好，现在是 X点Y分，今天…」。凌晨 3 点的自动校时也走 apply_sync，
  * 用这个标志挡住，不然半夜会突然开口报时。 */
 static bool s_boot_greeted;
+/* 语音请求的播报标志：串口接收任务只置位，daily_task 负责播报。 */
+static volatile bool s_speak_time_pending;
+static volatile bool s_speak_weather_pending;
+
+/* 接收任务只置标志；必须顺手叫醒 daily_task —— 它平时按“下一个整点/闹钟”
+ * 睡几千秒，光置标志没人消费，表现为问时间/问天气完全没反应。 */
+void time_service_request_time(void)
+{
+    s_speak_time_pending = true;
+    if (s_daily_task != NULL) xTaskNotifyGive(s_daily_task);
+}
+void time_service_request_weather(void)
+{
+    s_speak_weather_pending = true;
+    if (s_daily_task != NULL) xTaskNotifyGive(s_daily_task);
+}
+static volatile bool s_alarm_wakeup_pending;   /* 闹钟到点待播报（esp_timer -> daily_task） */
 static esp_timer_handle_t s_alarm_speak_timer;
 /* 闹钟:ASRPRO 回调只置标志,daily_task 负责写 NVS / 播铃 / 停铃。
  * 两个槽位;"每天"型到点响一次后往后滚 86400 继续响,"今天/明天"型响完即清。 */
@@ -181,16 +207,8 @@ static volatile uint8_t s_alarm_pending_day;    /* 0=今天 1=明天 2=每天 */
 static volatile uint8_t s_alarm_pending_period; /* 0=早上 1=上午 2=下午 3=晚上 4=凌晨 */
 static volatile uint8_t s_alarm_pending_hour;   /* 0~23,时段已折算进去 */
 static volatile uint8_t s_alarm_pending_minute; /* 0,5,10,…,55 */
-/* 要写进哪个槽位;APP_ALARM_SLOT_MAX = 还没定(找空位,或两个都满要反问)。 */
+/* 要写进哪个槽位;APP_ALARM_SLOT_MAX = 还没定(找空位;两个都满则走取消流程)。 */
 static volatile uint8_t s_alarm_pending_slot = APP_ALARM_SLOT_MAX;
-/* 两个槽位都占满时置起,等 ASRPRO 回 "ALARM PICK 1|2" 再继续写。
- * 并给一个等待截止时刻(esp_timer 微秒):播完"要替换哪一个"起算,超时自动作废 ——
- * 否则用户过十分钟随口说一句"第一个",会莫名其妙覆盖掉他已设好的闹钟。 */
-static volatile bool s_alarm_pick_pending;
-static volatile int64_t s_alarm_pick_until_us;
-
-/* 等用户回答"要替换哪一个"的时长。播报本身最长约 6.3 s,留足反应时间。 */
-#define ALARM_PICK_TIMEOUT_US (60LL * 1000000LL)
 
 static char s_location_response[LOCATION_RESPONSE_MAX];
 
@@ -208,6 +226,12 @@ static int32_t s_longitude_e3;
 #define COORDS_NVS_NAMESPACE "time_svc"
 #define COORDS_KEY_LAT "lat_e3"
 #define COORDS_KEY_LON "lon_e3"
+#define COORDS_KEY_CITY "city"
+
+/* IP 定位接口返回的城市名(通常是拼音),天气播报时用来选城市片段。
+ * 必须和坐标一起存：坐标命中缓存时不会再请求定位接口，
+ * 城市名不跟着存就会丢，播报只剩「今天天气晴」而没地名。 */
+static char s_city[48];
 
 static void coords_save(void)
 {
@@ -216,6 +240,8 @@ static void coords_save(void)
     if (nvs_open(COORDS_NVS_NAMESPACE, NVS_READWRITE, &handle) != ESP_OK) return;
     if (nvs_set_i32(handle, COORDS_KEY_LAT, s_latitude_e3) == ESP_OK &&
         nvs_set_i32(handle, COORDS_KEY_LON, s_longitude_e3) == ESP_OK) {
+        /* 城市名一起存，否则下次命中坐标缓存时没有地名可播。 */
+        if (s_city[0] != '\0') (void)nvs_set_str(handle, COORDS_KEY_CITY, s_city);
         (void)nvs_commit(handle);
     }
     nvs_close(handle);
@@ -231,13 +257,16 @@ static void coords_load(void)
         nvs_get_i32(handle, COORDS_KEY_LON, &lon) == ESP_OK && (lat != 0 || lon != 0)) {
         s_latitude_e3 = lat;
         s_longitude_e3 = lon;
-        ESP_LOGI(TAG, "reused saved coordinates: lat_e3=%ld lon_e3=%ld", (long)lat, (long)lon);
+        /* 城市名跟坐标一起恢复：本次开机不请求定位接口时，靠它播地名。 */
+        size_t city_len = sizeof(s_city);
+        if (nvs_get_str(handle, COORDS_KEY_CITY, s_city, &city_len) != ESP_OK) {
+            s_city[0] = '\0';
+        }
+        ESP_LOGI(TAG, "reused saved coordinates: lat_e3=%ld lon_e3=%ld city=\"%s\"", (long)lat,
+                 (long)lon, s_city);
     }
     nvs_close(handle);
 }
-
-/* IP 定位接口返回的城市名(通常是拼音),天气播报时用来选城市片段。 */
-static char s_city[48];
 
 /* 天气缓存:每次校时成功后抓一次,用户语音问天气时直接拼片段播报,不临时联网。
  * am/pm 是逐小时数据里 9 点与 15 点的天气代码,不同就播成"X转Y"。 */
@@ -341,7 +370,6 @@ static bool request_utc_offset_from_provider(const char *url, location_provider_
         if (cJSON_IsNumber(lat) && cJSON_IsNumber(lon)) {
             s_latitude_e3 = (int32_t)(lat->valuedouble * 1000.0);
             s_longitude_e3 = (int32_t)(lon->valuedouble * 1000.0);
-            coords_save();   /* 立刻存一份,下次定位服务抽风时用来兜底 */
             s_has_location = true;
         }
         /* 城市名给天气播报选地名用(通常是拼音,例如 "Hangzhou")。 */
@@ -349,6 +377,9 @@ static bool request_utc_offset_from_provider(const char *url, location_provider_
         if (cJSON_IsString(city) && city->valuestring != NULL) {
             snprintf(s_city, sizeof(s_city), "%s", city->valuestring);
         }
+        /* 必须在解析完 city 之后才存，否则写进 NVS 的城市名是空的，
+         * 下次命中坐标缓存就没地名可播。 */
+        if (s_has_location) coords_save();
         ESP_LOGI(TAG, "IP timezone offset acquired: provider=%d offset=%ld seconds", provider,
                  (long)*out);
     } else {
@@ -503,6 +534,144 @@ static const city_fragment_t k_city_fragments[] = {
     {"qingdao", 193U},      {"青岛", 193U},       /* 193 青岛 */
     {"dalian", 194U},       {"大连", 194U},       /* 194 大连 */
     {"suzhou", 195U},       {"苏州", 195U},       /* 195 苏州 */
+    /* ---- 196~241 + 244：补充城市（242/243 被关闭/取消闹钟占用） ----
+     * 别名按 ipwho.is 的英文拼写 + 中文两种都写，定位接口换供应商也能匹配上。 */
+    {"shijiazhuang", 196U}, {"石家庄", 196U},     /* 196 石家庄 */
+    {"hohhot", 197U},       {"huhehaote", 197U},  {"呼和浩特", 197U}, /* 197 呼和浩特 */
+    {"lanzhou", 198U},      {"兰州", 198U},       /* 198 兰州 */
+    {"xining", 199U},       {"西宁", 199U},       /* 199 西宁 */
+    {"yinchuan", 200U},     {"银川", 200U},       /* 200 银川 */
+    {"lhasa", 201U},        {"lasa", 201U},       {"拉萨", 201U},     /* 201 拉萨 */
+    {"haikou", 202U},       {"海口", 202U},       /* 202 海口 */
+    {"wuxi", 203U},         {"无锡", 203U},       /* 203 无锡 */
+    {"changzhou", 204U},    {"常州", 204U},       /* 204 常州 */
+    {"wenzhou", 205U},      {"温州", 205U},       /* 205 温州 */
+    {"shaoxing", 206U},     {"绍兴", 206U},       /* 206 绍兴 */
+    {"jiaxing", 207U},      {"嘉兴", 207U},       /* 207 嘉兴 */
+    {"jinhua", 208U},       {"金华", 208U},       /* 208 金华 */
+    {"taizhou", 209U},      {"台州", 209U},       /* 209 台州 */
+    {"nantong", 210U},      {"南通", 210U},       /* 210 南通 */
+    {"xuzhou", 211U},       {"徐州", 211U},       /* 211 徐州 */
+    {"yangzhou", 212U},     {"扬州", 212U},       /* 212 扬州 */
+    {"dongguan", 213U},     {"东莞", 213U},       /* 213 东莞 */
+    {"foshan", 214U},       {"佛山", 214U},       /* 214 佛山 */
+    {"zhuhai", 215U},       {"珠海", 215U},       /* 215 珠海 */
+    {"zhongshan", 216U},    {"中山", 216U},       /* 216 中山 */
+    {"huizhou", 217U},      {"惠州", 217U},       /* 217 惠州 */
+    {"shantou", 218U},      {"汕头", 218U},       /* 218 汕头 */
+    {"guilin", 219U},       {"桂林", 219U},       /* 219 桂林 */
+    {"liuzhou", 220U},      {"柳州", 220U},       /* 220 柳州 */
+    {"tangshan", 221U},     {"唐山", 221U},       /* 221 唐山 */
+    {"baoding", 222U},      {"保定", 222U},       /* 222 保定 */
+    {"handan", 223U},       {"邯郸", 223U},       /* 223 邯郸 */
+    {"qinhuangdao", 224U},  {"秦皇岛", 224U},     /* 224 秦皇岛 */
+    {"baotou", 225U},       {"包头", 225U},       /* 225 包头 */
+    {"yantai", 226U},       {"烟台", 226U},       /* 226 烟台 */
+    {"weifang", 227U},      {"潍坊", 227U},       /* 227 潍坊 */
+    {"linyi", 228U},        {"临沂", 228U},       /* 228 临沂 */
+    {"zibo", 229U},         {"淄博", 229U},       /* 229 淄博 */
+    {"luoyang", 230U},      {"洛阳", 230U},       /* 230 洛阳 */
+    {"kaifeng", 231U},      {"开封", 231U},       /* 231 开封 */
+    {"yichang", 232U},      {"宜昌", 232U},       /* 232 宜昌 */
+    {"xiangyang", 233U},    {"襄阳", 233U},       /* 233 襄阳 */
+    {"zhuzhou", 234U},      {"株洲", 234U},       /* 234 株洲 */
+    {"mianyang", 235U},     {"绵阳", 235U},       /* 235 绵阳 */
+    {"zunyi", 236U},        {"遵义", 236U},       /* 236 遵义 */
+    {"dali", 237U},         {"大理", 237U},       /* 237 大理 */
+    {"qujing", 238U},       {"曲靖", 238U},       /* 238 曲靖 */
+    {"daqing", 239U},       {"大庆", 239U},       /* 239 大庆 */
+    {"jilin", 240U},        {"吉林", 240U},       /* 240 吉林 */
+    {"qiqihar", 241U},      {"qiqihaer", 241U},   {"齐齐哈尔", 241U}, /* 241 齐齐哈尔 */
+    {"anshan", 244U},       {"鞍山", 244U},       /* 244 鞍山 */
+};
+
+/* 城市片段对应的经纬度（单位 0.001 度），用于“定位接口没给城市名”时的离线兜底。
+ * ipwho.is / ipapi.co 经常只返回坐标或 city 字段为空，而坐标和天气都能拿到；
+ * 那就用坐标在本地表里找最近的城市，不依赖任何网络接口。 */
+typedef struct {
+    uint16_t fragment;
+    int32_t lat_e3;
+    int32_t lon_e3;
+} city_coord_t;
+
+static const city_coord_t k_city_coords[] = {
+    {166U,  39904, 116407},  /* 北京 */
+    {167U,  31230, 121474},  /* 上海 */
+    {168U,  39084, 117201},  /* 天津 */
+    {169U,  29563, 106551},  /* 重庆 */
+    {170U,  37870, 112548},  /* 太原 */
+    {171U,  41805, 123431},  /* 沈阳 */
+    {172U,  43817, 125324},  /* 长春 */
+    {173U,  45803, 126535},  /* 哈尔滨 */
+    {174U,  32060, 118796},  /* 南京 */
+    {175U,  30274, 120155},  /* 杭州 */
+    {176U,  31821, 117227},  /* 合肥 */
+    {177U,  26074, 119296},  /* 福州 */
+    {178U,  28682, 115858},  /* 南昌 */
+    {179U,  36651, 117120},  /* 济南 */
+    {180U,  34746, 113625},  /* 郑州 */
+    {181U,  30593, 114305},  /* 武汉 */
+    {182U,  28228, 112939},  /* 长沙 */
+    {183U,  23129, 113264},  /* 广州 */
+    {184U,  22817, 108367},  /* 南宁 */
+    {185U,  30573, 104066},  /* 成都 */
+    {186U,  26647, 106630},  /* 贵阳 */
+    {187U,  25038, 102718},  /* 昆明 */
+    {188U,  34341, 108940},  /* 西安 */
+    {189U,  43825,  87617},  /* 乌鲁木齐 */
+    {190U,  22543, 114058},  /* 深圳 */
+    {191U,  24480, 118089},  /* 厦门 */
+    {192U,  29868, 121544},  /* 宁波 */
+    {193U,  36067, 120383},  /* 青岛 */
+    {194U,  38914, 121615},  /* 大连 */
+    {195U,  31299, 120585},  /* 苏州 */
+    {196U,  38042, 114515},  /* 石家庄 */
+    {197U,  40842, 111749},  /* 呼和浩特 */
+    {198U,  36061, 103834},  /* 兰州 */
+    {199U,  36617, 101778},  /* 西宁 */
+    {200U,  38487, 106231},  /* 银川 */
+    {201U,  29652,  91172},  /* 拉萨 */
+    {202U,  20044, 110199},  /* 海口 */
+    {203U,  31491, 120312},  /* 无锡 */
+    {204U,  31811, 119974},  /* 常州 */
+    {205U,  27994, 120699},  /* 温州 */
+    {206U,  30030, 120580},  /* 绍兴 */
+    {207U,  30746, 120756},  /* 嘉兴 */
+    {208U,  29079, 119647},  /* 金华 */
+    {209U,  28656, 121421},  /* 台州 */
+    {210U,  31981, 120894},  /* 南通 */
+    {211U,  34205, 117284},  /* 徐州 */
+    {212U,  32394, 119413},  /* 扬州 */
+    {213U,  23021, 113752},  /* 东莞 */
+    {214U,  23022, 113122},  /* 佛山 */
+    {215U,  22271, 113577},  /* 珠海 */
+    {216U,  22517, 113393},  /* 中山 */
+    {217U,  23112, 114416},  /* 惠州 */
+    {218U,  23354, 116682},  /* 汕头 */
+    {219U,  25274, 110290},  /* 桂林 */
+    {220U,  24326, 109428},  /* 柳州 */
+    {221U,  39630, 118180},  /* 唐山 */
+    {222U,  38874, 115465},  /* 保定 */
+    {223U,  36625, 114539},  /* 邯郸 */
+    {224U,  39935, 119600},  /* 秦皇岛 */
+    {225U,  40657, 109840},  /* 包头 */
+    {226U,  37464, 121448},  /* 烟台 */
+    {227U,  36707, 119162},  /* 潍坊 */
+    {228U,  35104, 118356},  /* 临沂 */
+    {229U,  36813, 118055},  /* 淄博 */
+    {230U,  34619, 112454},  /* 洛阳 */
+    {231U,  34797, 114307},  /* 开封 */
+    {232U,  30692, 111286},  /* 宜昌 */
+    {233U,  32009, 112122},  /* 襄阳 */
+    {234U,  27828, 113134},  /* 株洲 */
+    {235U,  31468, 104679},  /* 绵阳 */
+    {236U,  27725, 106927},  /* 遵义 */
+    {237U,  25606, 100268},  /* 大理 */
+    {238U,  25490, 103797},  /* 曲靖 */
+    {239U,  46589, 125104},  /* 大庆 */
+    {240U,  43838, 126550},  /* 吉林 */
+    {241U,  47354, 123918},  /* 齐齐哈尔 */
+    {244U,  41109, 122995},  /* 鞍山 */
 };
 
 /* 归一化:保留 ASCII 字母数字(转小写)与 UTF-8 字节(中文),丢掉空格/撇号/连字符等。
@@ -522,7 +691,9 @@ static void normalize_city(const char *src, char *out, size_t size)
     out[n] = '\0';
 }
 
-/* 城市名 -> 播报片段;查不到就退化成只说"天气"。 */
+/* 城市名 -> 播报片段。
+ * 顺序：先用 IP 定位返回的名字查表；名字缺失或匹配不上，再用缓存的经纬度
+ * 在本地城市表里找最近的那个。后者完全离网，不依赖 ipwho.is / ipapi.co。 */
 static uint16_t city_fragment(void)
 {
     char key[64];
@@ -531,7 +702,30 @@ static uint16_t city_fragment(void)
         for (size_t i = 0U; i < sizeof(k_city_fragments) / sizeof(k_city_fragments[0]); i++) {
             if (strcmp(key, k_city_fragments[i].key) == 0) return k_city_fragments[i].fragment;
         }
+        ESP_LOGW(TAG, "city not matched: \"%s\", trying coordinates", s_city);
     }
+
+    /* 经纬度单位是 0.001 度；2000 个单位约等于 2 度（≈220 km）。
+     * 超出这个范围就不硬套邻省城市，宁可只说“天气”。 */
+    if (s_has_location || s_latitude_e3 != 0 || s_longitude_e3 != 0) {
+        uint16_t best = 0U;
+        int64_t best_d2 = INT64_MAX;
+        for (size_t i = 0U; i < sizeof(k_city_coords) / sizeof(k_city_coords[0]); i++) {
+            const int64_t dlat = (int64_t)s_latitude_e3 - k_city_coords[i].lat_e3;
+            const int64_t dlon = (int64_t)s_longitude_e3 - k_city_coords[i].lon_e3;
+            const int64_t d2 = dlat * dlat + dlon * dlon;
+            if (d2 < best_d2) {
+                best_d2 = d2;
+                best = k_city_coords[i].fragment;
+            }
+        }
+        if (best != 0U && best_d2 <= 2000LL * 2000LL) {
+            ESP_LOGI(TAG, "city by coordinates: fragment=%u d2=%lld", (unsigned)best,
+                     (long long)best_d2);
+            return best;
+        }
+    }
+
     ESP_LOGW(TAG, "city not matched: \"%s\" -> play \"天气\" only", s_city);
     return (uint16_t)SPK_WEATHER_PLAIN;
 }
@@ -551,39 +745,47 @@ static void format_coord(char *out, size_t size, int32_t e3)
  *   18雷阵雨 19雷阵雨伴冰雹 */
 static uint16_t weather_fragment(int code)
 {
-    uint8_t offset;
+    /* 只播四大类：晴 / 阴 / 雨 / 雪，不再念“毛毛雨”“强阵雪”这种细分类。
+     *
+     * 词表里没有单独的“雨”“雪”片段（136~155 全是细分天气），
+     * 所以雨类统一用 143“小雨”、雪类用 151“小雪”代表整类。
+     * 要念成单字“雨/雪”，得在 ASRPRO 词表新增片段并重新生成模型。
+     *
+     *  晴   → 136 晴
+     *  阴   → 139 阴（含晴间多云/多云/雾）
+     *  雨   → 403 雨（含中雨/大雨/暴雨/阵雨/雷阵雨）
+     *  雪   → 404 雪（含中雪/大雪/阵雪） */
     switch (code) {
-        case 0: offset = 0U; break;                    /* 晴 */
-        case 1: offset = 1U; break;                    /* 晴间多云 */
-        case 2: offset = 2U; break;                    /* 多云 */
-        case 3: offset = 3U; break;                    /* 阴 */
+        case 0: return 136U;                                   /* 晴 */
+        case 1:
+        case 2:
+        case 3:
         case 45:
-        case 48: offset = 4U; break;                   /* 有雾 */
-        case 51: offset = 5U; break;                   /* 毛毛雨 */
+        case 48: return 139U;                                  /* 晴间多云/多云/阴/雾 -> 阴 */
+        case 51:
+        case 53:
+        case 55:
         case 56:
         case 57:
+        case 61:
+        case 63:
+        case 65:
         case 66:
-        case 67: offset = 6U; break;                   /* 冻雨 */
-        case 53:
-        case 61: offset = 7U; break;                   /* 小雨 */
-        case 55:
-        case 63: offset = 8U; break;                   /* 中雨 */
-        case 65: offset = 9U; break;                   /* 大雨 */
-        case 82: offset = 10U; break;                  /* 暴雨 */
-        case 80: offset = 11U; break;                  /* 阵雨 */
-        case 81: offset = 12U; break;                  /* 中阵雨 */
-        case 85: offset = 13U; break;                  /* 阵雪 */
-        case 86: offset = 14U; break;                  /* 强阵雪 */
-        case 71:
-        case 77: offset = 15U; break;                  /* 小雪 */
-        case 73: offset = 16U; break;                  /* 中雪 */
-        case 75: offset = 17U; break;                  /* 大雪 */
-        case 95: offset = 18U; break;                  /* 雷阵雨 */
+        case 67:
+        case 80:
+        case 81:
+        case 82:
+        case 95:
         case 96:
-        case 99: offset = 19U; break;                  /* 雷阵雨伴冰雹 */
-        default: offset = 2U; break;                   /* 未知 -> 多云 */
+        case 99: return SPK_WEATHER_RAIN;                       /* 各种雨 -> 雨 */
+        case 71:
+        case 73:
+        case 75:
+        case 77:
+        case 85:
+        case 86: return SPK_WEATHER_SNOW;                       /* 各种雪 -> 雪 */
+        default: return 139U;                                  /* 未知 -> 阴 */
     }
-    return (uint16_t)(SPK_WEATHER_BASE + offset);
 }
 
 /* 校时成功后(Wi-Fi 与互联网都确认可用时)抓一次当天天气缓存。
@@ -683,7 +885,7 @@ static void sync_task(void *arg)
         s_active_sync_generation = generation;
         if (!wifi_manager_has_credentials()) {
             (void)runtime_event_log_append(RUNTIME_EVENT_WIFI_FAILURE, ESP_ERR_INVALID_STATE, 0, 0);
-            if (!sync_was_cancelled(generation)) clock_display_post_event(CLOCK_EVENT_SYNC_FAILED);
+            if (!sync_was_cancelled(generation)) clock_display_post_event(CLOCK_EVENT_NETWORK_FAILED);
             s_sync_active = false;
             continue;
         }
@@ -709,7 +911,7 @@ static void sync_task(void *arg)
                 (void)runtime_event_log_append(RUNTIME_EVENT_WIFI_FAILURE, ESP_ERR_TIMEOUT, 0,
                                                0);
             }
-            clock_display_post_event(CLOCK_EVENT_SYNC_FAILED);
+            clock_display_post_event(CLOCK_EVENT_NETWORK_FAILED);
             s_sync_active = false;
             continue;
         }
@@ -721,7 +923,7 @@ static void sync_task(void *arg)
             (void)wifi_manager_stop();
             (void)runtime_event_log_append(RUNTIME_EVENT_NETWORK_FAILURE, internet_error,
                                            internet_status, 0);
-            clock_display_post_event(CLOCK_EVENT_SYNC_FAILED);
+            clock_display_post_event(CLOCK_EVENT_NETWORK_FAILED);
             s_sync_active = false;
             continue;
         }
@@ -734,7 +936,7 @@ static void sync_task(void *arg)
         if (sntp_start_err != ESP_OK) {
             (void)wifi_manager_stop();
             (void)runtime_event_log_append(RUNTIME_EVENT_SNTP_FAILURE, sntp_start_err, 0, 0);
-            clock_display_post_event(CLOCK_EVENT_SYNC_FAILED);
+            clock_display_post_event(CLOCK_EVENT_DATA_FAILED);
             s_sync_active = false;
             continue;
         }
@@ -777,7 +979,7 @@ static void sync_task(void *arg)
             }
             (void)wifi_manager_stop();
             (void)runtime_event_log_append(RUNTIME_EVENT_SNTP_FAILURE, ESP_ERR_TIMEOUT, 0, 0);
-            clock_display_post_event(CLOCK_EVENT_SYNC_FAILED);
+            clock_display_post_event(CLOCK_EVENT_DATA_FAILED);
             s_sync_active = false;
             continue;
         }
@@ -830,6 +1032,7 @@ static void speak_alarm_confirm(const app_alarm_t *alarm);
 static size_t append_weather_summary(uint16_t *out, size_t n);
 static void speak_alarm_wakeup(void);
 static void speak_hourly_report(int hour);
+static void speak_current_time(void);
 
 static void daily_task(void *arg)
 {
@@ -839,25 +1042,28 @@ static void daily_task(void *arg)
     int last_report_hour = -1;
     uint32_t last_wait_seconds = UINT32_MAX;
     for (;;) {
+        /* 语音问时间/天气：接收任务只置标志，这里才真正播报。 */
+        if (s_speak_time_pending) {
+            s_speak_time_pending = false;
+            speak_current_time();
+        }
+        if (s_speak_weather_pending) {
+            s_speak_weather_pending = false;
+            time_service_speak_weather();
+        }
+        /* 闹钟到点播报：esp_timer 回调只置位，这里播。 */
+        if (s_alarm_wakeup_pending) {
+            s_alarm_wakeup_pending = false;
+            speak_alarm_wakeup();
+        }
+
         time_t raw = time(NULL) + s_utc_offset_seconds;
         struct tm local = {0};
         gmtime_r(&raw, &local);
 
-        /* 等"要替换哪一个"超时了:及时作废,免得隔很久一句"第一个"突然生效。
-         * 真正的把关在 time_service_on_alarm_pick() 里(那边才是关键路径),
-         * 这里只是把标志清干净,让日志和状态一致。 */
-        if (s_alarm_pick_pending && s_alarm_pick_until_us > 0 &&
-            esp_timer_get_time() > s_alarm_pick_until_us) {
-            s_alarm_pick_pending = false;
-            s_alarm_pick_until_us = 0;
-            ESP_LOGW(TAG, "alarm replace prompt expired");
-        }
-
         /* 语音设置/取消闹钟:在这里落 NVS,避免占用 ASRPRO 接收任务。 */
         if (s_alarm_clear_pending) {
             s_alarm_clear_pending = false;
-            s_alarm_pick_pending = false;
-            s_alarm_pick_until_us = 0;
             s_alarm_pending_slot = APP_ALARM_SLOT_MAX;
             (void)app_config_clear_alarms(&s_config);
             (void)asrpro_stop();                       /* 正在响的闹铃立刻停 */
@@ -875,24 +1081,12 @@ static void daily_task(void *arg)
             if (slot >= APP_ALARM_SLOT_MAX) slot = app_config_free_alarm_slot(&s_config);
 
             if (slot >= APP_ALARM_SLOT_MAX) {
-                /* 两个槽位都占着:先把现有的两个念一遍,再问要替换哪一个。
-                 * day/period/hour/minute 原样留着 —— PICK 回来会重新置
-                 * set_pending 把这里再走一遍,那时 slot 已经有值了。 */
-                /* 最长 22 段:已经设了两个闹钟了(1) + 第一个是(1) + 闹钟1(最多9)
-                 * + 第二个是(1) + 闹钟2(最多9) + 要替换哪一个(1)。
-                 * 单个闹钟最多 9 段 = 日期1 + 时段1 + 时2 + 点1 + 分3 + 分1。 */
-                uint16_t ask[24U];
-                size_t n = 0U;
-                ask[n++] = (uint16_t)SPK_ALARM_FULL;
-                ask[n++] = (uint16_t)SPK_ALARM_SLOT1;
-                n = append_alarm_summary(ask, n, &s_config.alarms[0]);
-                ask[n++] = (uint16_t)SPK_ALARM_SLOT2;
-                n = append_alarm_summary(ask, n, &s_config.alarms[1]);
-                ask[n++] = (uint16_t)SPK_ALARM_WHICH;
-                (void)asrpro_say(ask, n);
-                s_alarm_pick_pending = true;
-                s_alarm_pick_until_us = esp_timer_get_time() + ALARM_PICK_TIMEOUT_US;
-                ESP_LOGI(TAG, "both alarm slots busy; asking which one to replace");
+                /* 两个槽位都满:不再问“替换哪一个”,改为提示已超出范围并走取消流程。
+                 * ASRPRO 收到 T_ALARM_FULL 会播
+                 * “已帮你找到两个已经设定好的闹钟，已超出范围，需要帮你取消闹钟，
+                 *   是否要全部取消？”，用户说“全部取消”才真正清空。 */
+                (void)asrpro_alarm_full();
+                ESP_LOGI(TAG, "both alarm slots busy; offering cancel flow");
             } else {
                 /* 以"当前时刻 + 偏移"求到点时间戳,避开日历换算。
                  * 每天型按"今天"起算,过了就滚到明天,之后天天往后滚;
@@ -925,6 +1119,9 @@ static void daily_task(void *arg)
                     }
                 } else {
                     ESP_LOGW(TAG, "alarm save failed");
+                    /* 必须告诉用户，不能让他以为设好了。 */
+                    const uint16_t failed = (uint16_t)SPK_ALARM_SAVE_FAILED;
+                    (void)asrpro_say(&failed, 1U);
                 }
                 s_alarm_pending_slot = APP_ALARM_SLOT_MAX; /* 用完复位,下次重新找空位 */
             }
@@ -1134,6 +1331,34 @@ static void speak_current_time(void)
     (void)asrpro_say(ids, n);
 }
 
+/* 播报时长：「三分二十五秒」。
+ * 分钟为 0 时只报秒（「二十五秒」）；秒为 0 时只报分（「三分」）；
+ * 都为 0 报「零秒」——否则会一句话都不说。 */
+void time_service_speak_duration(int minutes, int seconds)
+{
+    uint16_t ids[ASRPRO_SAY_MAX];
+    size_t n = 0U;
+
+    if (minutes < 0) minutes = 0;
+    if (seconds < 0) seconds = 0;
+
+    ids[n++] = (uint16_t)SPK_TIMER_PREFIX;   /* 这次计时时间为 */
+
+    if (minutes > 0) {
+        n = append_number(ids, n, minutes);
+        ids[n++] = (uint16_t)SPK_MINUTE;
+    }
+    if (seconds > 0 || minutes == 0) {
+        n = append_number(ids, n, seconds);
+        ids[n++] = (uint16_t)SPK_SECOND;
+    }
+
+    ESP_LOGI(TAG, "speak duration %d min %d s (%u segments)", minutes, seconds, (unsigned)n);
+    /* 计时结束是机器主动开口，用 ANNOUNCE 不拉唤醒态，
+     * 否则播完 20 秒会冒一句「我退下了」。 */
+    (void)asrpro_announce(ids, n);
+}
+
 /* 问候语用的时段词:早上(5~8)/上午(9~11)/下午(12~16)/晚上(其余)。
  * 凌晨并进"晚上好"—— 「凌晨好」太机械。与闹钟唤醒播报(speak_alarm_wakeup)
  * 的分档保持一致;词表里没有"中午"这个片段,12 点用"下午好"。 */
@@ -1145,33 +1370,39 @@ static uint16_t greeting_period_of(int hour)
     return (uint16_t)SPK_PERIOD_EVENING;
 }
 
-/* 整点报时:早上好 + 现在是 X点整 + 今天天气。
- * 由 ESP32 主动下发，走 asrpro_announce() -> T_ANNOUNCE ——
+/* 整点提示音：TF 卡 001~012，12 小时制回绕（13:00 播 001，00:00 播 012）。
+ * 先让提示音响这么长时间，再停掉并报时间；0 = 不等，紧跟着报。 */
+#define HOURLY_CHIME_LEAD_MS 5400U
+
+/* 整点报时：先播 TF 卡对应小时的提示音，再报「现在是 X 点整」。
+ * 不再问候、不再报天气 —— 整点只做提醒。
+ * 由 ESP32 主动下发，时间部分走 asrpro_announce() -> T_ANNOUNCE，
  * ASRPRO 收到后只切命令表、不碰状态机，播完不会冒一句"我退下了"。 */
 static void speak_hourly_report(int hour)
 {
     uint16_t ids[ASRPRO_SAY_MAX];
     size_t n = 0U;
 
-    /* 问候「X上好」= 时段词 + 250「好」(复用"大声点"那条的回复音)。 */
-    ids[n++] = greeting_period_of(hour);
-    ids[n++] = (uint16_t)SPK_GREET_GOOD;
+    ids[n++] = (uint16_t)SPK_NOW;                   /* 现在是 */
+    /* 24 小时制：13:00 就念“十三点整”，不用再补上午/下午。
+     * 12 小时制下 13:00 和 01:00 都是“一点整”，容易听混。 */
+    n = append_number(ids, n, hour);
+    ids[n++] = (uint16_t)SPK_POINT;                 /* 点 */
+    ids[n++] = (uint16_t)SPK_OCLOCK;                /* 整 */
 
-    /* 现在是 X 点整。196 未配置时此段静音跳过,后面的照旧播。 */
-    ids[n++] = (uint16_t)SPK_NOW;
-    const int hour12 = (hour % 12 == 0) ? 12 : (hour % 12);
-    n = append_number(ids, n, hour12);
-    ids[n++] = (uint16_t)SPK_POINT;
-    ids[n++] = (uint16_t)SPK_OCLOCK;
-
-    /* 今天天气。天气还没缓存就跳过这一段,问候和时间照旧。 */
-    if (s_weather_valid || WEATHER_DEBUG_FORCE) {
-        ids[n++] = (uint16_t)SPK_ALARM_TODAY;
-        n = append_weather_summary(ids, n);
+    /* 先放本小时的提示音，响 HOURLY_CHIME_LEAD_MS 后停掉再报时间，
+     * 避免提示音和报时叠在一起。
+     * TF 卡 001~012 对应 00~11 点：00→001、01→002 … 11→012，
+     * 12 点开始重新回到 001（12→001、13→002 … 23→012）。 */
+    const uint8_t chime = (uint8_t)((hour % 12) + 1);
+    (void)asrpro_play(chime);
+    if (HOURLY_CHIME_LEAD_MS > 0U) {
+        vTaskDelay(pdMS_TO_TICKS(HOURLY_CHIME_LEAD_MS));
+        (void)asrpro_stop();
     }
 
-    ESP_LOGI(TAG, "hourly report %02d:00 (%u segments, weather=%d)", hour, (unsigned)n,
-             (int)s_weather_valid);
+    ESP_LOGI(TAG, "hourly report %02d:00 chime=%03u (%u segments)", hour, (unsigned)chime,
+             (unsigned)n);
     (void)asrpro_announce(ids, n);
 }
 
@@ -1288,6 +1519,9 @@ static void speak_alarm_confirm(const app_alarm_t *alarm)
 {
     uint16_t ids[ASRPRO_SAY_MAX];
     size_t n = 0U;
+    /* 先播确认句「好的，已经帮你设定好闹钟了」，再读回完整时间。
+     * 只有读回时用户容易以为没设上（尤其是时段听不清的时候）。 */
+    ids[n++] = (uint16_t)SPK_ALARM_OK;
     n = append_alarm_summary(ids, n, alarm);
     ids[n++] = alarm->repeat_daily ? (uint16_t)SPK_ALARM_TAIL_DAILY
                                    : (uint16_t)SPK_ALARM_TAIL_ONCE;
@@ -1327,22 +1561,19 @@ static size_t append_weather_summary(uint16_t *out, size_t n)
     tmin = WEATHER_DEBUG_TMIN;
 #endif
 
-    /* 地名片段:"今天"由触发词的 ASRTO 播过,这里接"<城市>天气";没匹配到城市就只说"天气"。 */
+    /* 句式：<城市>天气 <天气>，气温 <最低> 到 <最高> 摄氏度。
+     * 例：「今天杭州天气晴，气温 20 到 25 摄氏度」。
+     * “今天”由调用方先拼（问天气/开机问候），整点报时不再报天气。
+     * 城市片段自带“天气”后缀（166=北京天气…），所以这里不再单独拼“天气”。 */
     out[n++] = city_fragment();
+    out[n++] = weather_fragment(code_am);
 
-    const uint16_t am = weather_fragment(code_am);
-    const uint16_t pm = weather_fragment(code_pm);
-    out[n++] = am;
-    if (am != pm) {
-        out[n++] = (uint16_t)SPK_TURN;
-        out[n++] = pm;
-    }
-    out[n++] = (uint16_t)SPK_TEMP_MAX;
-    n = append_temperature(out, n, tmax);
-    out[n++] = (uint16_t)SPK_DEGREE;
-    out[n++] = (uint16_t)SPK_TEMP_MIN;
+    out[n++] = SPK_AIR_TEMP;
     n = append_temperature(out, n, tmin);
-    out[n++] = (uint16_t)SPK_DEGREE;
+    out[n++] = SPK_TEMP_RANGE;
+    n = append_temperature(out, n, tmax);
+    out[n++] = SPK_CELSIUS;
+    (void)code_pm;   /* 四大类归并后不再区分 AM/PM，保留参数避免大改动 */
     return n;
 }
 
@@ -1416,6 +1647,7 @@ static void speak_alarm_wakeup(void)
     }
 
     if (s_weather_valid || WEATHER_DEBUG_FORCE) {
+        ids[n++] = (uint16_t)SPK_ALARM_TODAY;   /* 今天 */
         n = append_weather_summary(ids, n);
     }
 
@@ -1484,27 +1716,6 @@ static void on_asrpro_line(const char *line)
     if (strncmp(line, "ALARM OFF", 9U) == 0) {
         s_alarm_clear_pending = true;
         s_alarm_set_pending = false;
-        s_alarm_pick_pending = false;
-        s_alarm_pick_until_us = 0;
-        if (s_daily_task != NULL) xTaskNotifyGive(s_daily_task);
-        return;
-    }
-    /* 闹钟满了之后的回答。没在等、或者已经超时,就忽略 ——
-     * 免得误覆盖用户已经设好的槽位。 */
-    if (strncmp(line, "ALARM PICK ", 11U) == 0) {
-        const char which = line[11];
-        const bool waiting =
-            s_alarm_pick_pending && esp_timer_get_time() <= s_alarm_pick_until_us;
-        if ((which != '1' && which != '2') || !waiting) {
-            ESP_LOGW(TAG, "unexpected or expired ALARM PICK: %s", line);
-            s_alarm_pick_pending = false;
-            s_alarm_pick_until_us = 0;
-            return;
-        }
-        s_alarm_pending_slot = (uint8_t)(which - '1');
-        s_alarm_pick_pending = false;
-        s_alarm_pick_until_us = 0;
-        s_alarm_set_pending = true;
         if (s_daily_task != NULL) xTaskNotifyGive(s_daily_task);
         return;
     }
@@ -1540,22 +1751,20 @@ static void on_asrpro_line(const char *line)
     s_alarm_pending_period = (uint8_t)(period < 0 ? 0 : period);
     s_alarm_pending_hour = (uint8_t)hour;
     s_alarm_pending_minute = (uint8_t)minute;
-    s_alarm_pending_slot = APP_ALARM_SLOT_MAX; /* 找空位;两个都满就反问 */
+    s_alarm_pending_slot = APP_ALARM_SLOT_MAX; /* 找空位;两个都满就走取消流程 */
     s_alarm_set_pending = true;
     s_alarm_clear_pending = false;
-    /* 这是新一轮设置请求:上一次"要替换哪一个"没答完的作废。 */
-    s_alarm_pick_pending = false;
-    s_alarm_pick_until_us = 0;
     if (s_daily_task != NULL) xTaskNotifyGive(s_daily_task);
 }
 
 /* 铃声先单独响 ALARM_SPEAK_DELAY_MS,到点才开口播报。
- * 播报念的是"此刻"的时间,放在延迟之后反而更准。
- * 这里跑在 esp_timer 任务上下文,asrpro_say() 只是往串口写一帧,不做阻塞操作。 */
+ * esp_timer 回调里不能调 asrpro_say()：它内部要等 PONG，最坏阻塞 500 ms，
+ * 而 esp_timer 任务不允许阻塞。这里只置标志，由 daily_task 去播。 */
 static void alarm_speak_callback(void *arg)
 {
     (void)arg;
-    speak_alarm_wakeup();
+    s_alarm_wakeup_pending = true;
+    if (s_daily_task != NULL) xTaskNotifyGive(s_daily_task);
 }
 
 esp_err_t time_service_init(const app_config_t *config, time_service_sync_finished_cb_t on_finished)
@@ -1661,44 +1870,19 @@ void time_service_on_alarm_set(uint8_t day, uint8_t period, uint8_t hour, uint8_
     s_alarm_pending_period = period;
     s_alarm_pending_hour = hour;
     s_alarm_pending_minute = minute;
-    s_alarm_pending_slot = APP_ALARM_SLOT_MAX; /* 找空位;两个都满就反问 */
+    s_alarm_pending_slot = APP_ALARM_SLOT_MAX; /* 找空位;两个都满就走取消流程 */
     s_alarm_set_pending = true;
     s_alarm_clear_pending = false;
-    /* 这是新一轮设置请求:上一次"要替换哪一个"没答完的作废。 */
-    s_alarm_pick_pending = false;
-    s_alarm_pick_until_us = 0;
     if (s_daily_task != NULL) xTaskNotifyGive(s_daily_task);
 
     ESP_LOGI(TAG, "alarm request: day=%u period=%u %02u:%02u", (unsigned)day, (unsigned)period,
              (unsigned)hour, (unsigned)minute);
 }
 
-void time_service_on_alarm_pick(uint8_t which)
-{
-    /* 没在等、或者已经超时,就忽略 —— 免得隔很久一句"第一个"突然生效。 */
-    const bool waiting = s_alarm_pick_pending && esp_timer_get_time() <= s_alarm_pick_until_us;
-    if ((which != 1U && which != 2U) || !waiting) {
-        ESP_LOGW(TAG, "unexpected or expired alarm pick: %u", (unsigned)which);
-        s_alarm_pick_pending = false;
-        s_alarm_pick_until_us = 0;
-        return;
-    }
-
-    s_alarm_pending_slot = (uint8_t)(which - 1U);
-    s_alarm_pick_pending = false;
-    s_alarm_pick_until_us = 0;
-    s_alarm_set_pending = true;
-    if (s_daily_task != NULL) xTaskNotifyGive(s_daily_task);
-
-    ESP_LOGI(TAG, "alarm replace slot %u", (unsigned)(which - 1U));
-}
-
 void time_service_on_alarm_off(void)
 {
     s_alarm_clear_pending = true;
     s_alarm_set_pending = false;
-    s_alarm_pick_pending = false;
-    s_alarm_pick_until_us = 0;
     if (s_daily_task != NULL) xTaskNotifyGive(s_daily_task);
     ESP_LOGI(TAG, "alarm clear requested");
 }

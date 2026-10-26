@@ -36,6 +36,12 @@ static esp_err_t configure_candidate(void)
     station.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
     station.sta.pmf_cfg.capable = true;
     station.sta.pmf_cfg.required = false;
+    /* 扫全部信道再选信号最好的那个。
+     * 默认是 WIFI_FAST_SCAN：扫到第一个同名 AP 就停，同一个 SSID 开了多个
+     * 热点/中继时可能连到很弱的那一个，甚至因为第一个候选落在 12/13 信道之外
+     * 直接失败。“换了信道就连不上”就是这个默认值造成的。 */
+    station.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
+    station.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
     return esp_wifi_set_config(WIFI_IF_STA, &station);
 }
 
@@ -111,6 +117,13 @@ esp_err_t wifi_manager_init(const app_config_t *config,
                             IP_EVENT, IP_EVENT_STA_GOT_IP, handle_event, NULL, NULL),
                         TAG, "IP event handler");
     ESP_RETURN_ON_ERROR(esp_wifi_set_storage(WIFI_STORAGE_RAM), TAG, "Wi-Fi RAM storage");
+    /* 不设国家码时默认是 "01"（worldwide），只允许信道 1~11。
+     * 路由器自动选到 12/13 信道时就完全扫不到 AP，表现为“同一个网络换个信道
+     * 就连不上”。按中国区设成 CN，开放 1~13 信道。 */
+    const esp_err_t country_err = esp_wifi_set_country_code("CN", true);
+    if (country_err != ESP_OK) {
+        ESP_LOGW(TAG, "Wi-Fi country code setup failed: %s", esp_err_to_name(country_err));
+    }
     return esp_wifi_set_mode(WIFI_MODE_STA);
 }
 

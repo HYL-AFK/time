@@ -18,6 +18,7 @@
 #define LINK_TEST_MODE 1
 #include "runtime_event_log.h"
 #include "time_service.h"
+#include "timer_service.h"
 #include "wifi_manager.h"
 
 static void finish_ble_session(void)
@@ -25,12 +26,36 @@ static void finish_ble_session(void)
     ble_provision_finish();
 }
 
+/* BOOT 短按切换静音：0 <-> 30。30 是 ASRPRO 侧的默认音量（g_volume = 30）。
+ * 音量加减走语音命令，不在按键上。 */
+#define BOOT_VOLUME_NORMAL 30U
+
+static bool s_muted;
+
+static void on_boot_button_short_press(void)
+{
+    s_muted = !s_muted;
+    const uint8_t volume = s_muted ? 0U : (uint8_t)BOOT_VOLUME_NORMAL;
+    ESP_LOGI("main", "BOOT short press: %s (volume %u)", s_muted ? "mute" : "unmute",
+             (unsigned)volume);
+    (void)link_probe_set_volume(volume);
+}
+
 static void on_boot_button_long_press(void)
 {
-#if !ECLOCK_DEMO_MODE
-    time_service_cancel_sync();
-    (void)ble_provision_start();
-#endif
+    /* 长按 3 秒：清空 NVS（WiFi 凭据 / 闹钟 / 坐标缓存全部丢失）后重启，
+     * 回到出厂配网状态。原来这里是“取消同步 + 进配网”，现在改成抹数据。 */
+    ESP_LOGW("main", "BOOT long press: erasing NVS and restarting");
+    (void)nvs_flash_erase();
+    esp_restart();
+}
+
+/* 模组心跳状态 -> 灯环。OFFLINE 亮红色呼吸（一直闪到恢复），
+ * 其余状态（LINK/READY）立刻撤掉。 */
+static void on_link_state(link_state_t state)
+{
+    clock_display_post_event(state == LINK_STATE_OFFLINE ? CLOCK_EVENT_LINK_OFFLINE
+                                                         : CLOCK_EVENT_LINK_RESTORED);
 }
 
 static void boot_sync_task(void *arg)
@@ -61,6 +86,7 @@ void app_main(void)
     if (link_probe_init() != ESP_OK) {
         ESP_LOGW("main", "link probe unavailable");
     }
+    link_probe_set_state_callback(on_link_state);
 #else
     if (asrpro_init() != ESP_OK) {
         // 音频模块不是时钟启动的硬依赖，未接模块时仍允许灯环正常工作。
@@ -68,10 +94,11 @@ void app_main(void)
     }
 #endif
     ESP_ERROR_CHECK(time_service_init(&config, finish_ble_session));
+    timer_service_init();
 #if !ECLOCK_DEMO_MODE
     ESP_ERROR_CHECK(ble_provision_init(&config));
 #endif
-    ESP_ERROR_CHECK(button_init(on_boot_button_long_press));
+    ESP_ERROR_CHECK(button_init(on_boot_button_short_press, on_boot_button_long_press));
 
 #if ECLOCK_DEMO_MODE
     clock_display_post_event(CLOCK_EVENT_BLE_CONNECTING);

@@ -52,15 +52,16 @@ esp_err_t asrpro_send_line(const char *line)
 
 esp_err_t asrpro_play(uint8_t index)
 {
+    /* 走 V1.1 链路（T_PLAY）。原来发 ASCII "P<n>"，但 LINK_TEST_MODE 下
+     * asrpro_init() 不执行、s_initialized 永远是 false，那条路会静默失败 ——
+     * 整点报时“没有提示音”就是这个原因。 */
     if (index == 0U) return ESP_ERR_INVALID_ARG;
-    char cmd[8];
-    snprintf(cmd, sizeof(cmd), "P%u", (unsigned)index);
-    return asrpro_send_line(cmd);
+    return link_probe_play(index);
 }
 
 esp_err_t asrpro_stop(void)
 {
-    return asrpro_send_line("STOP");
+    return link_probe_stop();
 }
 
 esp_err_t asrpro_set_volume(uint8_t volume)
@@ -99,6 +100,12 @@ esp_err_t asrpro_announce(const uint16_t *ids, size_t count)
 {
     if (ids == NULL || count == 0U || count > ASRPRO_SAY_MAX) return ESP_ERR_INVALID_ARG;
     return link_probe_announce(ids, (int)count);
+}
+
+/* 两个槽位已满：让 ASRPRO 播提示并进入取消确认状态。 */
+esp_err_t asrpro_alarm_full(void)
+{
+    return link_probe_alarm_full();
 }
 
 esp_err_t asrpro_set_event_callback(void (*cb)(const char *line))

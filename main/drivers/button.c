@@ -9,34 +9,45 @@
 
 #define BUTTON_POLL_MS 50
 #define BUTTON_LONG_PRESS_US (3LL * 1000LL * 1000LL)
+/* 短按下限：滤掉抖动和意外蹭到，低于 50 ms 不算按键。 */
+#define BUTTON_SHORT_PRESS_MIN_US (50LL * 1000LL)
 
-static button_long_press_cb_t s_callback;
+static button_press_cb_t s_short_callback;
+static button_press_cb_t s_long_callback;
 
 static void button_task(void *arg)
 {
     (void)arg;
     int64_t pressed_since_us = 0;
-    bool reported = false;
+    bool long_reported = false;
 
     for (;;) {
         const bool pressed = gpio_get_level(CLOCK_BOOT_BUTTON_GPIO) == 0;
         if (!pressed) {
+            if (pressed_since_us != 0 && !long_reported) {
+                const int64_t held = esp_timer_get_time() - pressed_since_us;
+                if (held >= BUTTON_SHORT_PRESS_MIN_US) {
+                    (void)runtime_event_log_append(RUNTIME_EVENT_BUTTON_SHORT_PRESS, 0, 0, 0);
+                    if (s_short_callback != NULL) s_short_callback();
+                }
+            }
             pressed_since_us = 0;
-            reported = false;
+            long_reported = false;
         } else if (pressed_since_us == 0) {
             pressed_since_us = esp_timer_get_time();
-        } else if (!reported && esp_timer_get_time() - pressed_since_us >= BUTTON_LONG_PRESS_US) {
-            reported = true;
+        } else if (!long_reported && esp_timer_get_time() - pressed_since_us >= BUTTON_LONG_PRESS_US) {
+            long_reported = true;
             (void)runtime_event_log_append(RUNTIME_EVENT_BUTTON_LONG_PRESS, 0, 0, 0);
-            if (s_callback != NULL) s_callback();
+            if (s_long_callback != NULL) s_long_callback();
         }
         vTaskDelay(pdMS_TO_TICKS(BUTTON_POLL_MS));
     }
 }
 
-esp_err_t button_init(button_long_press_cb_t on_long_press)
+esp_err_t button_init(button_press_cb_t on_short_press, button_press_cb_t on_long_press)
 {
-    s_callback = on_long_press;
+    s_short_callback = on_short_press;
+    s_long_callback = on_long_press;
     const gpio_config_t config = {
         .pin_bit_mask = 1ULL << CLOCK_BOOT_BUTTON_GPIO,
         .mode = GPIO_MODE_INPUT,

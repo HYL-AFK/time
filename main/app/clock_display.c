@@ -35,8 +35,10 @@ typedef enum {
     DISPLAY_PAGE_BLE_SUCCESS,
     DISPLAY_PAGE_WIFI_SUCCESS,
     DISPLAY_PAGE_TIME_SUCCESS,
-    DISPLAY_PAGE_FAILURE,
-    DISPLAY_PAGE_BLE_TIMEOUT,
+    DISPLAY_PAGE_FAILURE,          /* 网络异常：红色呼吸 */
+    DISPLAY_PAGE_DATA_FAILURE,     /* 数据异常：橙色呼吸 */
+    DISPLAY_PAGE_BLE_TIMEOUT,      /* 蓝牙异常：紫色呼吸 */
+    DISPLAY_PAGE_LINK_FAILURE,     /* 模组链路断开：红色呼吸，一直闪到链路恢复 */
 } display_page_t;
 
 static QueueHandle_t s_events;
@@ -44,6 +46,9 @@ static TaskHandle_t s_task;
 static const char *TAG = "clock_display";
 static clock_status_t s_status = CLOCK_STATUS_UNAVAILABLE;
 static int64_t s_status_started_us;
+/* 模组链路断开：时钟照常走，但指针灯变红色呼吸，直到恢复。 */
+static bool s_link_fault;
+static int64_t s_link_fault_started_us;
 
 static clock_rgb_t color_for_page(display_page_t page)
 {
@@ -60,8 +65,14 @@ static clock_rgb_t color_for_page(display_page_t page)
         return (clock_rgb_t){.red = 0, .green = 255, .blue = 255};
     case DISPLAY_PAGE_FAILURE:
         return (clock_rgb_t){.red = 255, .green = 0, .blue = 0};
+    case DISPLAY_PAGE_DATA_FAILURE:
+        /* 橙色：网络通了但数据没拿到（校时/定位/天气），与“网络不通”的红色区分开。 */
+        return (clock_rgb_t){.red = 255, .green = 128, .blue = 0};
     case DISPLAY_PAGE_BLE_TIMEOUT:
         return (clock_rgb_t){.red = 160, .green = 0, .blue = 255};
+    case DISPLAY_PAGE_LINK_FAILURE:
+        /* 模组（ASRPRO）心跳丢了：红色呼吸，持续到链路恢复。 */
+        return (clock_rgb_t){.red = 255, .green = 0, .blue = 0};
     default:
         return (clock_rgb_t){0};
     }
@@ -72,14 +83,15 @@ static bool page_is_breathing(display_page_t page)
     return page == DISPLAY_PAGE_BLE_WAIT || page == DISPLAY_PAGE_WIFI_CREDENTIALS_WAIT ||
            page == DISPLAY_PAGE_WIFI_WAIT ||
            page == DISPLAY_PAGE_TIME_WAIT || page == DISPLAY_PAGE_FAILURE ||
-           page == DISPLAY_PAGE_BLE_TIMEOUT;
+           page == DISPLAY_PAGE_DATA_FAILURE || page == DISPLAY_PAGE_BLE_TIMEOUT ||
+           page == DISPLAY_PAGE_LINK_FAILURE;
 }
 
 static bool page_is_transient(display_page_t page)
 {
     return page == DISPLAY_PAGE_BLE_SUCCESS || page == DISPLAY_PAGE_WIFI_SUCCESS ||
            page == DISPLAY_PAGE_TIME_SUCCESS || page == DISPLAY_PAGE_FAILURE ||
-           page == DISPLAY_PAGE_BLE_TIMEOUT;
+           page == DISPLAY_PAGE_DATA_FAILURE || page == DISPLAY_PAGE_BLE_TIMEOUT;
 }
 
 static int64_t page_duration_us(display_page_t page)
@@ -88,7 +100,7 @@ static int64_t page_duration_us(display_page_t page)
         return DISPLAY_SUCCESS_US;
     }
     if (page == DISPLAY_PAGE_TIME_SUCCESS || page == DISPLAY_PAGE_FAILURE ||
-        page == DISPLAY_PAGE_BLE_TIMEOUT) {
+        page == DISPLAY_PAGE_DATA_FAILURE || page == DISPLAY_PAGE_BLE_TIMEOUT) {
         return DISPLAY_STATUS_US;
     }
     return 0;
@@ -112,7 +124,14 @@ static void render_status(display_page_t page, int64_t elapsed_us)
         const bool solid_on = elapsed_us >= 4LL * DISPLAY_FLASH_US;
         if (!flash_on && !solid_on) color = (clock_rgb_t){0};
     }
-    if (led_ring_show_solid(color, 100U) != ESP_OK) clock_display_report_fault();
+    /* 默认走 led_ring_show() 的 10% 硬件保护限幅，红色 255 只剩 25，
+     * 链路异常时几乎看不出来。异常页单独提到 50%，其他页保持 10%
+     * （24 颗全亮时的电流/发热考虑）。 */
+    clock_rgb_t frame[CLOCK_RING_LED_COUNT];
+    for (uint8_t i = 0; i < CLOCK_RING_LED_COUNT; ++i) frame[i] = color;
+    const uint8_t cap =
+        (page == DISPLAY_PAGE_LINK_FAILURE) ? 50U : LED_RING_SAFE_MAX_PERCENT;
+    if (led_ring_show_limited(frame, 100U, cap) != ESP_OK) clock_display_report_fault();
 }
 
 static void render_boot(int64_t elapsed_us)
@@ -171,6 +190,15 @@ static void render_clock(void)
     clock_render_frame(&now, frame);
     clock_apply_status_indicator(frame, s_status,
                                  (uint32_t)((esp_timer_get_time() - s_status_started_us) / 1000LL));
+
+    if (s_link_fault) {
+        /* 6 点位置那颗状态呼吸灯（frame[12]）变红。
+         * 这是常亮的指示位，不跟指针走；不能动时/分针。 */
+        const uint8_t level = clock_breathing_level(
+            (uint32_t)((esp_timer_get_time() - s_link_fault_started_us) / 1000LL));
+        frame[12] = (clock_rgb_t){.red = level, .green = 0U, .blue = 0U};
+    }
+
     const esp_err_t err = led_ring_show_limited(frame, clock_brightness_percent(now.hour, now.minute),
                                                 clock_hand_output_cap_percent());
     if (err != ESP_OK) clock_display_report_fault();
@@ -220,11 +248,24 @@ static bool set_page_from_event(clock_event_t event, display_page_t *page)
         *page = DISPLAY_PAGE_TIME_SUCCESS;
         return true;
     case CLOCK_EVENT_SYNC_FAILED:
+    case CLOCK_EVENT_NETWORK_FAILED:
         *page = DISPLAY_PAGE_FAILURE;
+        return true;
+    case CLOCK_EVENT_DATA_FAILED:
+        *page = DISPLAY_PAGE_DATA_FAILURE;
         return true;
     case CLOCK_EVENT_BLE_TIMEOUT:
         *page = DISPLAY_PAGE_BLE_TIMEOUT;
         return true;
+    /* 链路异常不切页面：时钟继续走，只把指针灯改成红色呼吸。
+     * 返回 false = 保持当前页（CLOCK），由 render_clock 读 s_link_fault。 */
+    case CLOCK_EVENT_LINK_OFFLINE:
+        s_link_fault = true;
+        s_link_fault_started_us = esp_timer_get_time();
+        return false;
+    case CLOCK_EVENT_LINK_RESTORED:
+        s_link_fault = false;
+        return false;
     default:
         return false;
     }
@@ -236,6 +277,7 @@ static display_page_t page_after_transient(display_page_t page)
     case DISPLAY_PAGE_BLE_SUCCESS:
         return DISPLAY_PAGE_WIFI_CREDENTIALS_WAIT;
     case DISPLAY_PAGE_FAILURE:
+    case DISPLAY_PAGE_DATA_FAILURE:
         if (time_service_has_valid_time()) return DISPLAY_PAGE_CLOCK;
         if (ble_provision_is_connected()) return DISPLAY_PAGE_WIFI_CREDENTIALS_WAIT;
         return DISPLAY_PAGE_BLE_WAIT;
@@ -285,6 +327,7 @@ static void display_task(void *arg)
                         }
                         page = next_page;
                         page_started_us = now_us;
+                        ESP_LOGI(TAG, "page -> %d (event %d)", (int)next_page, (int)event);
                         if (page_is_transient(page)) break;
                     }
                 }

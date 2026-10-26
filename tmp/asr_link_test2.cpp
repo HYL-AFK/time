@@ -3,6 +3,20 @@ extern "C"{ void * __dso_handle = 0 ;}
 #include "setup.h"
 #include "HardwareSerial.h"
 #include "asr_lu_mp3.h"
+/* 语音播报（prompt_play）的音量是独立的一条通路，
+ * 要用 audio_play_set_vol_gain(0~100) 控制；vol_set() 下限是 1，静不到 0。
+ * 必须包 extern "C"：SDK 是 C 编译的，这个头文件没写 extern "C" 保护，
+ * 直接包进来会生成 _Z22audio_play_set_vol_gainl 这种修饰名，链接时找不到。 */
+extern "C" {
+#include "audio_play_api.h"
+#include "codec_manager.h"
+#include "status_share.h"
+}
+/* 功放（PA）开关：audio_play_set_vol_gain(0) 只压 DAC 增益，
+ * PA 还开着时底噪依旧能听到，要完全静音必须把 PA 也关掉。
+ * 不能直接调 power_amplifier_on/off：它们在 board.h 里只有声明，
+ * 链接时找不到实现（undefined reference）。改走 audio_play_api 的封装，
+ * 由 SDK 内部去操作 PA。 */
 
 uint32_t snid;
 ASR_LU_MP3 lxb_mp3_Serial1;
@@ -55,6 +69,9 @@ int st_day    = -1;   /* -1=未定 0=今天 1=明天 2=每天(重复) */
 int st_period = -1;   /* -1=未说 0=早上 1=上午 2=下午 3=晚上 4=凌晨 */
 int st_hour   = -1;   /* 1~12 */
 int st_min    = -1;   /* 0=整 5~55 */
+/* 刚问过“是早上/上午/…/晚上？”——下一句时段词只补时段，
+ * 必须保留上一句已经确定的 st_day，不能按“新开一轮”清掉。 */
+bool g_awaiting_period = false;
 
 /* 反问日期后暂存用户的选择 —— 已经废弃。
  * 现在日期直接写 st_day，不再中转：中转会让上一轮的"明天"残留到下一轮，
@@ -71,11 +88,19 @@ int st_pending_day = -1;
 #define TF_HINT_INDEX 0   /* 0=不播提示音。001~012 是整点报时、101 是闹钟铃声,别拿来当提示音 */
 int g_volume = 30;
 
+/* 语音命令里的音量加减（大声点/小声点/音量加/音量减）。
+ * 必须走 apply_volume：原来只调 lxb_mp3_Serial1（TF 卡），
+ * 语音播报是另一条通路，所以喊了没反应。 */
+static void apply_volume(uint8_t v);
+
 void vol_step(int d){
-  g_volume += d;
-  if (g_volume < 0)   g_volume = 0;
-  if (g_volume > 100) g_volume = 100;
-  lxb_mp3_Serial1.volume((uint8_t)g_volume);
+  int v = g_volume + d;
+  if (v < 0)   v = 0;
+  if (v > 100) v = 100;
+  apply_volume((uint8_t)v);
+  /* 调试口打印，方便确认每步到底调到多少。 */
+  Serial.print("VOL ");
+  Serial.println(v);
   if (TF_HINT_INDEX > 0) {
     lxb_mp3_Serial1.playMp3Folder(0, TF_HINT_INDEX);
     lxb_mp3_Serial1.start();
@@ -88,6 +113,18 @@ void vol_step(int d){
  *       400=请先说是今天的、明天的、还是每天的,
  *       401=好的，是今天的、明天的、还是每天的。 */
 volatile int g_pending_ask = 0;
+
+/* 取消闹钟要二次确认：说“取消闹钟/取消下午的闹钟”后先反问，
+ * 30 秒内说“全部取消”才真正清空；超时就作废，避免隔很久一句确认把闹钟全清了。 */
+static bool g_cancel_pending = false;
+static uint32_t g_cancel_pending_until = 0;
+#define CANCEL_CONFIRM_MS 30000UL
+
+/* 最后一次识别到命令词的时刻。用来判断“用户说了话但没命中任何词”。 */
+static uint32_t g_last_asr_ms = 0;
+/* 本次唤醒已经提示过“没听清/没听懂”。每次识别成功后重置，
+ * 这样连续说多句时每句都有机会得到反馈。 */
+static bool g_unrec_prompted = false;
 
 /* 时间词(256~399,"三点整"这类)的三道闸。
  * 实测:用户说完"帮我定个今天下午的闹钟"后就等着 —— 根本没说"三点",
@@ -137,8 +174,16 @@ void st_begin(int day, int period){
   g_asking_date = false;   /* 新开一轮,上一轮的"等日期"作废 */
   /* 不要再从 st_pending_day 接残值。以前 "下午的闹钟" 会把上一轮
    * 遗留下来的"明天"接上，导致用户明明没说日期，却被告知"明天下午…"。
-   * 日期只能来自本轮：组合词自带的 day，或者反问后用户亲口答的 case 45/46/72。 */
-  st_day    = day;
+   * 日期只能来自本轮：组合词自带的 day，或者反问后用户亲口答的 case 45/46/72。
+   *
+   * 例外：刚问过"是早上/上午/…/晚上？"（g_awaiting_period），
+   * 这一句只补时段，日期沿用上一句已经确定的 st_day。 */
+  if (day >= 0) {
+    st_day = day;
+  } else if (!g_awaiting_period) {
+    st_day = -1;
+  }
+  g_awaiting_period = false;
   st_period = period;
   st_hour = -1;
   st_min  = -1;
@@ -202,10 +247,20 @@ void st_begin(int day, int period){
 int g_say_ids[SAY_MAX];
 int g_say_count = 0;
 
-/* 等当前播报结束;单段最多等 6 s,避免异常情况下卡死 */
+/* 等当前播报结束;单段最多等 6 s,避免异常情况下卡死。
+ * 播报期间主循环被这里卡住，T_VOL 帧会积压到下一句才生效。
+ * 所以每轮顺手 poll_volume()，只挑音量帧实时应用，其他帧丢弃。 */
+static void poll_volume(void);
+
 void say_wait_idle(){
   uint32_t guard = 0;
-  while (prompt_is_playing() && guard < 600) { delay(10); guard++; }
+  while (prompt_is_playing() && guard < 600) {
+    poll_volume();
+    /* 播音用的是内部 CODEC：PLAY_CODEC_ID=1。
+     * 之前写 0（外部 CODEC），静音完全打在空处，所以声音只是变小不消失。 */
+    if (g_volume == 0) cm_set_codec_mute(PLAY_CODEC_ID, CODEC_OUTPUT, 3, ENABLE);
+    delay(10); guard++;
+  }
 }
 
 void say_sequence(){
@@ -226,12 +281,16 @@ void say_sequence(){
     Serial.print(" valid=");
     Serial.println((int)is_valid_cmd_handle(cmd_info_find_command_by_id(id)));
 
-    const uint32_t r = prompt_play_by_cmd_id(id, -1, NULL, true);
+    const uint32_t r = prompt_play_by_cmd_id(id, -1, NULL, false);
     Serial.print("PLAY ");
     Serial.print(id);
     Serial.print(" ret=");
     Serial.println((int)r);
     say_wait_idle();
+    /* 极短片段（“五” 0.04 s、“秒” 0.05 s）刚启动就播完了，
+     * prompt_is_playing() 可能还没置位，下一段会把它打断。
+     * 固定让出 80 ms，确保短音频真的发声。 */
+    delay(80);
   }
   g_say_count = 0;
 }
@@ -293,8 +352,13 @@ extern "C" int power_mode_switch(int mode);
 #define T_ASK_TIME     0x30   /* 用户问时间,ESP32 回 SAY 片段序列 */
 #define T_ASK_WEATHER  0x31   /* 用户问天气 */
 #define T_ALARM_SET    0x32   /* 载荷: day period hour min */
-#define T_ALARM_PICK   0x33   /* 载荷: slot(1/2) */
 #define T_ALARM_OFF    0x34
+#define T_ALARM_FULL   0x35   /* ESP32 -> ASRPRO: 两个槽位已满，进取消确认 */
+#define T_TIMER_START       0x40   /* 正计时开始 */
+#define T_TIMER_STOP        0x41   /* 正计时停止（ESP32 拼时长播报） */
+#define T_TIMER_CANCEL      0x42   /* 取消计时 */
+#define T_COUNTDOWN_SET     0x43   /* 载荷: 秒数(2B 大端) */
+#define T_COUNTDOWN_CANCEL  0x44   /* 取消倒计时 */
 
 /* ---- E -> A : ESP32 下发 ---- */
 #define T_PONG         0x80
@@ -335,7 +399,7 @@ static uint16_t crc16_modbus(const uint8_t *p, int n)
   return crc;
 }
 
-/* 通用发帧:type + 载荷(可为 NULL)。返回实际写出的字节数。 */
+/* 通用发帧:type + 载荷(可为 NULL)。定长：载荷恒为 PAYLOAD_MAX 字节。 */
 static int send_frame(uint8_t type, const uint8_t *pl, uint8_t n)
 {
   if (n > PAYLOAD_MAX) n = PAYLOAD_MAX;
@@ -343,21 +407,89 @@ static int send_frame(uint8_t type, const uint8_t *pl, uint8_t n)
   uint8_t f[FRAME_MAX];
   f[0] = kHead[0];
   f[1] = kHead[1];
-  f[2] = (uint8_t)(n + 5);       /* LEN */
-  f[3] = g_seq++;                /* SEQ */
+  f[2] = (uint8_t)(PAYLOAD_MAX + 5);   /* LEN 固定 53 */
+  f[3] = g_seq++;                     /* SEQ */
   f[4] = type;
-  for (uint8_t i = 0; i < n; i++) f[5 + i] = pl[i];
+  /* 补 0xFF：SAY 类载荷是片段 ID，0 可能是合法 ID，用 0xFFFF 表示“结束” */
+  for (uint8_t i = 0; i < PAYLOAD_MAX; i++) f[5 + i] = 0xFF;
+  for (uint8_t i = 0; i < n; i++) f[5 + i] = (pl != NULL) ? pl[i] : 0xFF;
 
-  const int body = n + 3;        /* LEN..payload 共 body 字节 */
+  const int body = PAYLOAD_MAX + 3;   /* LEN..payload */
   const uint16_t c = crc16_modbus(f + 2, body);
-  f[5 + n] = (uint8_t)(c & 0xFF);
-  f[6 + n] = (uint8_t)((c >> 8) & 0xFF);
-  f[7 + n] = kTail[0];
-  f[8 + n] = kTail[1];
+  f[5 + PAYLOAD_MAX] = (uint8_t)(c & 0xFF);
+  f[6 + PAYLOAD_MAX] = (uint8_t)((c >> 8) & 0xFF);
+  f[7 + PAYLOAD_MAX] = kTail[0];
+  f[8 + PAYLOAD_MAX] = kTail[1];
 
-  const int total = n + 9;
+  const int total = PAYLOAD_MAX + 9;   /* 57 */
   Serial2.write(f, total);
+  /* 计时帧单独打一行，方便区分“ASRPRO 没发”和“ESP32 没收到”。 */
+  if (type >= T_TIMER_START && type <= T_COUNTDOWN_CANCEL) {
+    Serial.print("TX timer 0x");
+    Serial.println(type, HEX);
+  }
   return total;
+}
+
+/* 应用音量：TF 卡 MP3 + 语音播报 DAC 增益 + codec 静音。
+ * 实测 audio_play_set_vol_gain(0) 只压增益，仍然能听清内容，
+ * 必须靠 cm_set_codec_mute 把 codec 输出整个静掉。
+ *
+ * 两条通路的标尺不同，不能都直接传 v：
+ *   lxb_mp3_Serial1.volume()   范围 0~30，v=30 已经是满档
+ *   audio_play_set_vol_gain()  范围 0~100，v=30 只有 30% 增益
+ * 以前都传 v，结果音量 30 时音乐正常、语音几乎听不见，要到 50 才出来。
+ * 这里把语音增益按 2 倍放大并封顶 100，两边听感才对齐。 */
+static void apply_volume(uint8_t v)
+{
+  g_volume = v;
+  const uint8_t mp3_v = v > 30U ? 30U : v;
+  uint16_t gain = (uint16_t)v * 2U;
+  if (gain > 100U) gain = 100U;
+  lxb_mp3_Serial1.volume(mp3_v);
+  audio_play_set_vol_gain((uint8_t)gain);
+  cm_set_codec_mute(PLAY_CODEC_ID, CODEC_OUTPUT, 3, v == 0 ? ENABLE : DISABLE);
+}
+
+/* 播报期间主循环被 say_wait_idle 卡住。这里只挑 T_VOL 帧实时应用，
+ * PING/STAT 要照常回包，否则播报期间心跳必掉、灯环一直闪红；
+ * 其他帧丢弃 —— 播报中不支持改状态，避免递归进 handle_request。 */
+static void send_response(uint8_t seq, uint8_t status);
+
+static void poll_volume(void)
+{
+  static uint8_t rx[FRAME_MAX];
+  static int rx_len = 0;
+  while (Serial2.available() > 0) {
+    const uint8_t b = (uint8_t)Serial2.read();
+    if (rx_len == 0 && b != kHead[0]) continue;
+    if (rx_len == 1 && b != kHead[1]) { rx_len = 0; continue; }
+    if (rx_len >= FRAME_MAX) rx_len = 0;
+    rx[rx_len++] = b;
+    if (rx_len >= 3) {
+      const int total = (int)rx[2] + 4;
+      if (total < 9 || total > FRAME_MAX) { rx_len = 0; continue; }
+      if (rx_len >= total) {
+        if (rx[2] == (uint8_t)(PAYLOAD_MAX + 5)) {
+          if (rx[4] == T_VOL) {
+            int v = rx[5];
+            if (v > 100) v = 100;
+            apply_volume((uint8_t)v);
+          } else if (rx[4] == T_PING || rx[4] == T_STAT) {
+            send_response(rx[3], 0x00);   /* 保持心跳 */
+          } else if (rx[4] == T_STOP) {
+            /* 播报中也能立即停：TF 卡提示音 + 语音播报一起打断，
+             * 并把待播片段清空（say_sequence 的循环据此提前退出）。 */
+            lxb_mp3_Serial1.stop();
+            prompt_stop_play();
+            g_say_count = 0;
+            send_response(rx[3], 0x00);
+          }
+        }
+        rx_len = 0;
+      }
+    }
+  }
 }
 
 /* ===== 延迟发送(当前未启用) =====
@@ -368,10 +500,26 @@ static int send_frame(uint8_t type, const uint8_t *pl, uint8_t n)
 #define DEFER_MS 0
 static volatile uint8_t  g_defer_type = 0;
 static volatile uint32_t g_defer_at   = 0;
+/* 延迟帧的载荷（倒计时需要带 2 字节秒数）。 */
+static uint8_t g_defer_payload[4];
+static volatile uint8_t g_defer_payload_len = 0;
 
 static void defer_request(uint8_t type){
   g_defer_type = type;
   g_defer_at   = millis() + DEFER_MS;
+}
+
+/* 倒计时：先播“好的，开始倒计时”，1.8 秒后再把秒数发给 ESP32。
+ * 载荷 2 字节大端（最长 3600 秒）。 */
+static void send_countdown(uint16_t seconds)
+{
+  st_reset();
+  g_pending_ask = 435;   /* 好的，开始倒计时 */
+  g_defer_payload[0] = (uint8_t)(seconds >> 8);
+  g_defer_payload[1] = (uint8_t)(seconds & 0xFFU);
+  g_defer_payload_len = 2;
+  g_defer_type = T_COUNTDOWN_SET;
+  g_defer_at = millis() + 1800;
 }
 
 void alarm_report(){
@@ -387,8 +535,7 @@ void alarm_report(){
   pl[0] = (uint8_t)st_day;
   pl[1] = (st_period < 0) ? 0xFF : (uint8_t)st_period;
   pl[2] = (uint8_t)h;
-  pl[3] = (uint8_t)st_min;
-  send_frame(T_ALARM_SET, pl, 4);
+  pl[3] = (uint8_t)st_min;  send_frame(T_ALARM_SET, pl, 4);
 
   st_reset();
 }
@@ -408,14 +555,15 @@ static void send_response(uint8_t seq, uint8_t status)
 
 static void handle_request(const uint8_t *f)
 {
-  /* V1.1 变长帧布局:
-   *   [0][1] 帧头 53 54   [2] LEN   [3] SEQ   [4] TYPE
-   *   [5 .. 4+n] PAYLOAD   [5+n][6+n] CRC   [7+n][8+n] 帧尾 43 21
-   *   n = LEN - 5,总长度 = n + 10 */
-  const uint8_t n    = (uint8_t)(f[2] - 5);
+  /* V1.1 定长帧布局（载荷恒为 PAYLOAD_MAX 字节）:
+   *   [0][1] 帧头 53 54   [2] LEN=53   [3] SEQ   [4] TYPE
+   *   [5 .. 52] PAYLOAD(48)   [53][54] CRC   [55][56] 帧尾 43 21
+   *   总长度固定 57 字节 */
+  const uint8_t n    = (uint8_t)PAYLOAD_MAX;
   const uint8_t seq  = f[3];
   const uint8_t type = f[4];
 
+  if (f[2] != (uint8_t)(PAYLOAD_MAX + 5)) { g_crc_err++; return; }
   if (f[7 + n] != kTail[0] || f[8 + n] != kTail[1]) { g_crc_err++; return; }
   const uint16_t want = (uint16_t)f[5 + n] | ((uint16_t)f[6 + n] << 8);
   if (want != crc16_modbus(f + 2, n + 3)) { g_crc_err++; return; }
@@ -440,7 +588,20 @@ static void handle_request(const uint8_t *f)
       break;
 
     case T_STOP:
+      /* TF 卡提示音和语音播报是两条通路，都要停；
+       * g_say_count 清零让正在跑的 say_sequence 不再续播。 */
       lxb_mp3_Serial1.stop();
+      prompt_stop_play();
+      g_say_count = 0;
+      send_response(seq, 0x00);
+      break;
+
+    case T_ALARM_FULL:
+      /* ESP32 说两个槽位都满了。播提示并进入“是否全部取消”的确认状态，
+       * 用户说“全部取消”就走 case 247。 */
+      g_cancel_pending = true;
+      g_cancel_pending_until = millis() + CANCEL_CONFIRM_MS;
+      g_pending_ask = 410;
       send_response(seq, 0x00);
       break;
 
@@ -448,7 +609,7 @@ static void handle_request(const uint8_t *f)
       if (n >= 1) {
         int v = f[5];
         if (v > 100) v = 100;
-        lxb_mp3_Serial1.volume((uint8_t)v);
+        apply_volume((uint8_t)v);
       }
       send_response(seq, 0x00);
       break;
@@ -463,15 +624,24 @@ static void handle_request(const uint8_t *f)
 
     case T_SAY:
     case T_ANNOUNCE: {
-      /* 两者载荷完全一样: N 个 16 位大端片段 ID,交给 say_sequence() 逐段播。 */
+      /* 两者载荷完全一样: N 个 16 位大端片段 ID,交给 say_sequence() 逐段播。
+       * 定长帧后面用 0xFFFF 补齐，遇到就停，不能把它当成片段 ID 0。 */
       const uint8_t cnt = (uint8_t)(n / 2);
       g_say_count = 0;
       for (uint8_t i = 0; i < cnt && g_say_count < SAY_MAX; i++) {
-        g_say_ids[g_say_count++] = ((int)f[5 + i * 2] << 8) | f[6 + i * 2];
+        const uint16_t id = (uint16_t)(((int)f[5 + i * 2] << 8) | f[6 + i * 2]);
+        if (id == 0xFFFF) break;   /* 补齐哨兵 */
+        g_say_ids[g_say_count++] = (int)id;
       }
       send_response(seq, 0x00);        /* 先回包,避免播放拖超时 */
 
       if (type == T_ANNOUNCE) {
+        /* 主动播报前先确保处于正常主频：ESP32 重启期间链路断开，
+         * 模块可能停在降频态，降频下切模型组/播种会失败。 */
+        if (g_pwr != PWR_NORMAL) {
+          power_mode_switch(PM_NORMAL);
+          g_pwr = PWR_NORMAL;
+        }
         /* 主动播报(整点报时/开机问候)要满足两件事:
          *
          * 1) 切到命令词模型组(0)。
@@ -486,15 +656,14 @@ static void handle_request(const uint8_t *f)
         cmd_info_change_cur_model_group(0);
         delay(20);
       } else if (g_say_count > 0) {
-        /* 只有真的收到可播片段，才续唤醒态。
-         * 以前这一支是无条件的 —— 只要收到一帧 CMD=0x20 就续 20 秒，
-         * 哪怕 payload 凑不出一个完整片段。
-         * 实测抓到过这种帧：
-         *   14:24:13  RX: 53 54 05 0A 01 A6 A1 43 21   ← 正常心跳 CMD=01
-         *   14:24:14  RX: 53 54 05 0B 20 67 29 43 21   ← CMD 变成 20，payload 只有 1 字节
-         *   14:24:15  RX: 53 54 05 0D 01 A4 91 43 21   ← 又回到 01
-         * 这条帧没有任何片段可播，却让模块凭空进了 20 秒唤醒态，
-         * 20 秒后正是“我退下了”。改成只在有片段时续，就从根上没了源。 */
+        /* 待机态收到主动 T_SAY（倒计时到点 / 计时结束）：
+         * 唤醒态 20 s 到期后 SDK 会把模型组切回 1，那里只有唤醒词，
+         * 432/437/431 全查不到，PLAY ret=1 就无声。
+         * 先切回组 0 再进唤醒态；播完不切 —— SDK 退出唤醒态时会自己切回组 1。 */
+        if (ciss_get(CI_SS_WAKING_UP_STATE) != (status_t)CI_SS_WAKEUPED) {
+          cmd_info_change_cur_model_group(0);
+          delay(20);
+        }
         set_state_enter_wakeup(20000);
       }
 
@@ -514,6 +683,37 @@ static void handle_request(const uint8_t *f)
   }
 }
 
+
+/* 唤醒后 4 s 没有任何识别结果，就回一句“没听清，请再说一遍”。
+ *
+ * 为什么不区分“说了但没命中词表”和“压根没说”：
+ * ASRPRO 的 VAD 是电平信号，唤醒词本身也会触发，而且唤醒词和
+ * 后一句的 VAD 会连在一起不回落，靠它无法区分两种情况；
+ * SDK 也只把 NO_RESULT 用在内部状态上，不向用户层提供。
+ * 所以统一用 413（没听清）——对两种情况都是自然的说法。 */
+static void check_unrecognized(void)
+{
+  static bool woke_seen = false;
+  static uint32_t woke_ms = 0;
+
+  if (ciss_get(CI_SS_WAKING_UP_STATE) != (status_t)CI_SS_WAKEUPED) {
+    woke_seen = false;
+    g_unrec_prompted = false;
+    return;
+  }
+  if (!woke_seen) {
+    woke_seen = true;
+    woke_ms = millis();
+  }
+  if (g_unrec_prompted) return;
+
+  if (ciss_get(CI_SS_PLAY_STATE) != (status_t)CI_SS_PLAY_STATE_IDLE) return;
+
+  if (millis() - woke_ms >= 4000U && millis() - g_last_asr_ms >= 4000U) {
+    g_unrec_prompted = true;
+    g_pending_ask = 413;   /* 抱歉，我没听清，请再说一遍 */
+  }
+}
 
 void app(){
   uint8_t buf[FRAME_MAX];
@@ -543,12 +743,16 @@ void app(){
       if (ask == 163) g_time_window_until = millis() + TIME_WINDOW_MS;
     }
 
+    check_unrecognized();
+
     /* 延迟发送:等触发词的 ASRTO 播完,再把业务请求发出去。
      * 放在循环开头 —— 下面的帧解析里有 continue 分支,放末尾会被跳过。 */
     if (g_defer_type != 0 && (int32_t)(millis() - g_defer_at) >= 0) {
       const uint8_t t = g_defer_type;
+      const uint8_t plen = g_defer_payload_len;
       g_defer_type = 0;
-      send_frame(t, NULL, 0);
+      g_defer_payload_len = 0;
+      send_frame(t, g_defer_payload, plen);
     }
 
     if (Serial2.available() > 0) {
@@ -583,6 +787,13 @@ void app(){
 }
 
 void ASR_CODE(){
+  /* 记录一次成功识别，供 check_unrecognized() 判断“这句已经处理过”。
+   * 真正的命令识别成功后锁上“没听清”提示——本轮已经听懂了，
+   * 不能再冒一句“抱歉我没听清”；唤醒词（snid 0）本身不算听懂，
+   * 保持提示机会，这样唤醒后不说话 4 s 才会有反馈。 */
+  g_last_asr_ms = millis();
+  if (snid != 0) g_unrec_prompted = true;
+
   /* 降频待机时被唤醒词唤醒 -> 本地自主升频，不等 ESP32 下命令。
    * 升频结果在下一次 PONG 的功耗字段回传给 ESP32。 */
   if (snid == 0 && g_pwr == PWR_LIGHT) {
@@ -671,6 +882,37 @@ void ASR_CODE(){
    case 28: st_begin(1, 3); break;   // 明天晚上
    case 29: st_begin(1, 4); break;   // 明天凌晨
 
+   /* ---- 时段单字/双字词:照着引导语答“下午”“上午”就能命中 ---- */
+   case 439: st_begin(-1, 0); break;  // 早上
+   case 440: st_begin(-1, 1); break;  // 上午
+   case 441: st_begin(-1, 2); break;  // 中午(按下午折算,12 点保持 12)
+   case 442: st_begin(-1, 2); break;  // 下午
+   case 443: st_begin(-1, 3); break;  // 晚上
+   case 444: st_begin(-1, 4); break;  // 凌晨
+
+   /* ---- “帮我定个〈日期〉的闹钟”：显式给了日期，接着问时段 ---- */
+   case 445:
+   case 446:
+   case 447:
+    st_day = (snid == 446) ? 1 : ((snid == 447) ? 2 : 0);
+    st_period = -1;
+    st_hour = -1;
+    st_min = -1;
+    g_awaiting_period = true;
+    g_pending_ask = 164;
+    break;
+
+   /* ---- 纯入口：状态全部清零，从问日期开始 ---- */
+   case 448:
+    st_day = -1;
+    st_period = -1;
+    st_hour = -1;
+    st_min = -1;
+    g_awaiting_period = false;
+    g_asking_date = true;
+    g_pending_ask = 401;
+    break;
+   
    /* ---- 时段词(不含日期):只说"下午的闹钟",ASRTO 会自动反问日期 ---- */
    case 40: st_begin(-1, 0); break;   // 早上的闹钟
    case 41: st_begin(-1, 1); break;   // 上午的闹钟
@@ -688,19 +930,25 @@ void ASR_CODE(){
     if (!g_asking_date) break;
     g_asking_date = false;
     st_day = (snid == 46) ? 1 : ((snid == 72) ? 2 : 0);
-    if (st_hour >= 0 && st_min >= 0) {
+    if (st_period >= 0 && st_hour >= 0 && st_min >= 0) {
       alarm_report();
       break;
     }
     st_hour = -1;
     st_min  = -1;
+    /* 日期定了、时段还没说 —— 先问时段。
+     * 以前这里直接问"几点几分"，用户答"三点半"就只能按 03:30 算，
+     * 想设下午三点反而设成了凌晨。 */
+    if (st_period < 0) {
+      g_awaiting_period = true;
+      g_pending_ask = 164;   // 请先说是上午还是下午的闹钟
+      break;
+    }
     g_pending_ask = 163;     // 好的，您想设几点几分的闹钟？
     g_time_window_until = millis() + TIME_WINDOW_MS;
     break;
 
-   /* ---- 闹钟已满时,回答"要替换哪一个" ---- */
-   case 73: { uint8_t s = 1; send_frame(T_ALARM_PICK, &s, 1); break; }   // 第一个
-   case 74: { uint8_t s = 2; send_frame(T_ALARM_PICK, &s, 1); break; }   // 第二个
+   /* ---- 闹钟已满：不再问“要替换哪一个”，改走取消流程 ---- */
 
    /* ---- 口语别名 ①:「帮我定个〈时段〉的闹钟」,与 40~44 完全等价 ---- */
    case 2:  st_begin(-1, 0); break;   // 帮我定个早上的闹钟
@@ -719,6 +967,17 @@ void ASR_CODE(){
    case 14: st_begin(1, 2); break;    // 帮我定个明天下午的闹钟
    case 15: st_begin(1, 3); break;    // 帮我定个明天晚上的闹钟
    case 16: st_begin(1, 4); break;    // 帮我定个明天凌晨的闹钟
+   /* “帮我定一个…”（多一个字）的 10 条，映射与 7~16 完全一致。 */
+   case 256: st_begin(0, 0); break;
+   case 257: st_begin(0, 1); break;
+   case 258: st_begin(0, 2); break;
+   case 259: st_begin(0, 3); break;
+   case 260: st_begin(0, 4); break;
+   case 261: st_begin(1, 0); break;
+   case 262: st_begin(1, 1); break;
+   case 263: st_begin(1, 2); break;
+   case 264: st_begin(1, 3); break;
+   case 265: st_begin(1, 4); break;
 
    /* ---- 口语别名 ②:「〈时段〉定个闹钟」(动词后置),与 40~44 等价 ---- */
    case 34: st_begin(-1, 0); break;   // 早上定个闹钟
@@ -740,24 +999,97 @@ void ASR_CODE(){
 
    /* ---- 小时:已并进上面的 256~399 范围(小时+分钟一起说),这里不再单独处理 ---- */
 
-   /* ---- 关闭闹钟:"取消闹钟"是别名,映射到同一处理 ---- */
+   /* ---- 取消闹钟：先反问确认，说“全部取消”才真正执行 ----
+    * 带粒度的说法（取消下午的/取消今天下午的）最终也是全部取消，
+    * 但先回一句“已经找到”让用户知道听懂了。 */
    case 242:
    case 243:
+   case 245:   /* 取消下午的闹钟 */
+   case 246:   /* 取消今天下午的闹钟 */
     st_reset();
-    /* 以前这里只清本地状态,忘了发帧 —— 用户说"取消闹钟"、ASRTO 也回了
-     * "闹钟已关闭",但 ESP32 根本不知道,闹钟照样会响。 */
-    send_frame(T_ALARM_OFF, NULL, 0);
+    g_cancel_pending = true;
+    g_cancel_pending_until = millis() + CANCEL_CONFIRM_MS;
+    g_pending_ask = 407;   /* 已经找到要取消的闹钟，是否要全部取消？ */
     break;
 
-   /* ---- 音量加/减(每次 10):"大声点/小声点"为主词,"音量加/减"为别名 ---- */
-   case 250: vol_step(+10); break;   // 大声点
-   case 251: vol_step(-10); break;   // 小声点
-   case 252: vol_step(+10); break;   // 音量加
-   case 253: vol_step(-10); break;   // 音量减
+   case 247:   /* 全部取消 */
+    if (!g_cancel_pending) break;
+    if ((int32_t)(millis() - g_cancel_pending_until) >= 0) {
+      g_cancel_pending = false;
+      break;
+    }
+    g_cancel_pending = false;
+    st_reset();
+    /* 先开口说“好，我已经把闹钟全部取消”，2.5 秒后再发停铃指令。
+     * 直接发的话 ESP32 收到会立刻 T_STOP，把刚开头的确认句打断。 */
+    g_pending_ask = 409;   /* 好，我已经把闹钟全部取消 */
+    g_defer_type = T_ALARM_OFF;
+    g_defer_at = millis() + 2500;
+    break;
+
+   /* ---- 音量加/减(每次 20):"增加音量/减小音量"为主词,"音量加/减"为别名 ---- */
+   /* 步进 20：一次就能听出差别。反馈用 254/255（不能改 250，
+    * 它是开机问候的“好”）；g_pending_ask 让 app 任务播，不在识别回调里播。 */
+   case 250: vol_step(+20); g_pending_ask = 254; break;   // 增加音量
+   case 251: vol_step(-20); g_pending_ask = 255; break;   // 减小音量
+   case 252: vol_step(+20); g_pending_ask = 254; break;   // 音量加
+   case 253: vol_step(-20); g_pending_ask = 255; break;   // 音量减
+
+   /* ---- 计时器 ---- */
+   case 414:   /* 开始计时 */
+    st_reset();
+    g_pending_ask = 433;   /* 好的，开始计时 */
+    g_defer_type = T_TIMER_START;
+    g_defer_at = millis() + 1800;
+    break;
+
+   case 415:   /* 停止计时：不播反馈，ESP32 拼时长 */
+    Serial.println("CASE 415 stop");
+    st_reset();
+    g_defer_type = T_TIMER_STOP;
+    g_defer_at = millis() + 200;
+    break;
+
+   case 416:   /* 取消计时 */
+    st_reset();
+    g_pending_ask = 434;   /* 已取消计时 */
+    g_defer_type = T_TIMER_CANCEL;
+    g_defer_at = millis() + 1500;
+    break;
+
+   case 430:   /* 取消倒计时 */
+    st_reset();
+    g_pending_ask = 436;   /* 已取消倒计时 */
+    g_defer_type = T_COUNTDOWN_CANCEL;
+    g_defer_at = millis() + 1800;
+    break;
+
+   /* ---- 倒计时 13 档：1/2/3/4/5/8/10/15/20/25/30/45/60 分钟 ---- */
+   case 417: send_countdown(60U);   break;
+   case 438: send_countdown(120U);  break;   /* “两分钟”口语别名，同 418 */
+   case 418: send_countdown(120U);  break;
+   case 419: send_countdown(180U);  break;
+   case 420: send_countdown(240U);  break;
+   case 421: send_countdown(300U);  break;
+   case 422: send_countdown(480U);  break;
+   case 423: send_countdown(600U);  break;
+   case 424: send_countdown(900U);  break;
+   case 425: send_countdown(1200U); break;
+   case 426: send_countdown(1500U); break;
+   case 427: send_countdown(1800U); break;
+   case 428: send_countdown(2700U); break;
+   case 429: send_countdown(3600U); break;
   }
 }
 
 void hardware_init(){
+  /* 上电先清掉所有“待播报/待确认”状态。
+   * g_pending_ask 若残留（上一次“增加音量”的回声没来得及播就重启），
+   * 开机第一句会变成“好的，音量增加了”，抢在开机问候前面。 */
+  g_pending_ask = 0;
+  g_cancel_pending = false;
+  g_cancel_pending_until = 0;
+
   /* 这一行必须有。去掉它的那次实验里 SSCOM 全是乱码 —— 说明 UART0 的
    * 115200 就是靠它设的，SDK 没有替我们初始化。
    * （不要去怀疑“它和 SDK 唤醒状态机抢 UART0”：真正有害的是在 ASR_CODE
@@ -766,7 +1098,7 @@ void hardware_init(){
   Serial.println("INIT OK");
   /* 版本戳:每次改完固件把这里改成对应版本,烧录后在 SSCOM 里核对。
    * 看到这行 == 芯片里跑的就是当前这份源码。 */
-  Serial.println("BUILD V1.4a 1738L 720-full");
+  Serial.println("BUILD V1.6 1967L 720-full+47city+volume+cancel");
   /* ===== 以下严格照抄 tmp/asr_dialog.cpp(9 月 22 日跑通的版本) =====
    * 之前我在这一段加了 THIRD_FUNCTION / scu_set_device_gate / dpmu_set_io_pull
    * / begin 后重复 setPinFun，全都去掉了 —— 那些是我的推测，不是验证过的代码。
@@ -831,8 +1163,6 @@ void setup()
   //{ID:46,keyword:"命令词",ASR:"明天",ASRTO:""}
   /* ---- 重复模式 + 替换选择(闹钟两个槽位用满时反问"要替换哪一个") ---- */
   //{ID:72,keyword:"命令词",ASR:"每天",ASRTO:""}
-  //{ID:73,keyword:"命令词",ASR:"第一个",ASRTO:""}
-  //{ID:74,keyword:"命令词",ASR:"第二个",ASRTO:""}
   /* ---- 以下 257~270 是"设好闹钟后读回时间"的确认句片段,不是给用户说的 ----
    * 确认句拼法:重复模式 + 时段 + 时 + 点 + 分 + 分 + 结尾
    *   每天  : 每天 + 下午 + 三 + 点 + 三 + 分 + 的时候都会叫你
@@ -868,6 +1198,18 @@ void setup()
   //{ID:14,keyword:"命令词",ASR:"帮我定个明天下午的闹钟",ASRTO:"好的，您想设几点几分的闹钟？"}
   //{ID:15,keyword:"命令词",ASR:"帮我定个明天晚上的闹钟",ASRTO:"好的，您想设几点几分的闹钟？"}
   //{ID:16,keyword:"命令词",ASR:"帮我定个明天凌晨的闹钟",ASRTO:"好的，您想设几点几分的闹钟？"}
+  /* “帮我定一个…”比“帮我定个…”多一个字，口语里更常见。
+   * 不补的话用户按习惯说“一个”就识别不到。 */
+  //{ID:256,keyword:"命令词",ASR:"帮我定一个今天早上的闹钟",ASRTO:""}
+  //{ID:257,keyword:"命令词",ASR:"帮我定一个今天上午的闹钟",ASRTO:""}
+  //{ID:258,keyword:"命令词",ASR:"帮我定一个今天下午的闹钟",ASRTO:""}
+  //{ID:259,keyword:"命令词",ASR:"帮我定一个今天晚上的闹钟",ASRTO:""}
+  //{ID:260,keyword:"命令词",ASR:"帮我定一个今天凌晨的闹钟",ASRTO:""}
+  //{ID:261,keyword:"命令词",ASR:"帮我定一个明天早上的闹钟",ASRTO:""}
+  //{ID:262,keyword:"命令词",ASR:"帮我定一个明天上午的闹钟",ASRTO:""}
+  //{ID:263,keyword:"命令词",ASR:"帮我定一个明天下午的闹钟",ASRTO:""}
+  //{ID:264,keyword:"命令词",ASR:"帮我定一个明天晚上的闹钟",ASRTO:""}
+  //{ID:265,keyword:"命令词",ASR:"帮我定一个明天凌晨的闹钟",ASRTO:""}
   /* ---- 口语别名②:「X定个闹钟」(动词后置,与 40~44 / 20~29 等价) ---- */
   //{ID:34,keyword:"命令词",ASR:"早上定个闹钟",ASRTO:""}
   //{ID:35,keyword:"命令词",ASR:"上午定个闹钟",ASRTO:""}
@@ -968,6 +1310,56 @@ void setup()
   //{ID:193,keyword:"命令词",ASR:"播报音青岛",ASRTO:"青岛天气"}
   //{ID:194,keyword:"命令词",ASR:"播报音大连",ASRTO:"大连天气"}
   //{ID:195,keyword:"命令词",ASR:"播报音苏州",ASRTO:"苏州天气"}
+  /* ---- 补充城市片段：196~241 + 244（242/243 已被关闭/取消闹钟占用）
+   * 城市片段统一带“天气”后缀，播报时直接接天气现象，如「杭州天气 晴」。
+   * 每加一个城市都要重新生成模型（ASRPRO 无 TTS，音频必须预合成）。 ---- */
+  //{ID:196,keyword:"命令词",ASR:"播报音石家庄",ASRTO:"石家庄天气"}
+  //{ID:197,keyword:"命令词",ASR:"播报音呼和浩特",ASRTO:"呼和浩特天气"}
+  //{ID:198,keyword:"命令词",ASR:"播报音兰州",ASRTO:"兰州天气"}
+  //{ID:199,keyword:"命令词",ASR:"播报音西宁",ASRTO:"西宁天气"}
+  //{ID:200,keyword:"命令词",ASR:"播报音银川",ASRTO:"银川天气"}
+  //{ID:201,keyword:"命令词",ASR:"播报音拉萨",ASRTO:"拉萨天气"}
+  //{ID:202,keyword:"命令词",ASR:"播报音海口",ASRTO:"海口天气"}
+  //{ID:203,keyword:"命令词",ASR:"播报音无锡",ASRTO:"无锡天气"}
+  //{ID:204,keyword:"命令词",ASR:"播报音常州",ASRTO:"常州天气"}
+  //{ID:205,keyword:"命令词",ASR:"播报音温州",ASRTO:"温州天气"}
+  //{ID:206,keyword:"命令词",ASR:"播报音绍兴",ASRTO:"绍兴天气"}
+  //{ID:207,keyword:"命令词",ASR:"播报音嘉兴",ASRTO:"嘉兴天气"}
+  //{ID:208,keyword:"命令词",ASR:"播报音金华",ASRTO:"金华天气"}
+  //{ID:209,keyword:"命令词",ASR:"播报音台州",ASRTO:"台州天气"}
+  //{ID:210,keyword:"命令词",ASR:"播报音南通",ASRTO:"南通天气"}
+  //{ID:211,keyword:"命令词",ASR:"播报音徐州",ASRTO:"徐州天气"}
+  //{ID:212,keyword:"命令词",ASR:"播报音扬州",ASRTO:"扬州天气"}
+  //{ID:213,keyword:"命令词",ASR:"播报音东莞",ASRTO:"东莞天气"}
+  //{ID:214,keyword:"命令词",ASR:"播报音佛山",ASRTO:"佛山天气"}
+  //{ID:215,keyword:"命令词",ASR:"播报音珠海",ASRTO:"珠海天气"}
+  //{ID:216,keyword:"命令词",ASR:"播报音中山",ASRTO:"中山天气"}
+  //{ID:217,keyword:"命令词",ASR:"播报音惠州",ASRTO:"惠州天气"}
+  //{ID:218,keyword:"命令词",ASR:"播报音汕头",ASRTO:"汕头天气"}
+  //{ID:219,keyword:"命令词",ASR:"播报音桂林",ASRTO:"桂林天气"}
+  //{ID:220,keyword:"命令词",ASR:"播报音柳州",ASRTO:"柳州天气"}
+  //{ID:221,keyword:"命令词",ASR:"播报音唐山",ASRTO:"唐山天气"}
+  //{ID:222,keyword:"命令词",ASR:"播报音保定",ASRTO:"保定天气"}
+  //{ID:223,keyword:"命令词",ASR:"播报音邯郸",ASRTO:"邯郸天气"}
+  //{ID:224,keyword:"命令词",ASR:"播报音秦皇岛",ASRTO:"秦皇岛天气"}
+  //{ID:225,keyword:"命令词",ASR:"播报音包头",ASRTO:"包头天气"}
+  //{ID:226,keyword:"命令词",ASR:"播报音烟台",ASRTO:"烟台天气"}
+  //{ID:227,keyword:"命令词",ASR:"播报音潍坊",ASRTO:"潍坊天气"}
+  //{ID:228,keyword:"命令词",ASR:"播报音临沂",ASRTO:"临沂天气"}
+  //{ID:229,keyword:"命令词",ASR:"播报音淄博",ASRTO:"淄博天气"}
+  //{ID:230,keyword:"命令词",ASR:"播报音洛阳",ASRTO:"洛阳天气"}
+  //{ID:231,keyword:"命令词",ASR:"播报音开封",ASRTO:"开封天气"}
+  //{ID:232,keyword:"命令词",ASR:"播报音宜昌",ASRTO:"宜昌天气"}
+  //{ID:233,keyword:"命令词",ASR:"播报音襄阳",ASRTO:"襄阳天气"}
+  //{ID:234,keyword:"命令词",ASR:"播报音株洲",ASRTO:"株洲天气"}
+  //{ID:235,keyword:"命令词",ASR:"播报音绵阳",ASRTO:"绵阳天气"}
+  //{ID:236,keyword:"命令词",ASR:"播报音遵义",ASRTO:"遵义天气"}
+  //{ID:237,keyword:"命令词",ASR:"播报音大理",ASRTO:"大理天气"}
+  //{ID:238,keyword:"命令词",ASR:"播报音曲靖",ASRTO:"曲靖天气"}
+  //{ID:239,keyword:"命令词",ASR:"播报音大庆",ASRTO:"大庆天气"}
+  //{ID:240,keyword:"命令词",ASR:"播报音吉林",ASRTO:"吉林天气"}
+  //{ID:241,keyword:"命令词",ASR:"播报音齐齐哈尔",ASRTO:"齐齐哈尔天气"}
+  //{ID:244,keyword:"命令词",ASR:"播报音鞍山",ASRTO:"鞍山天气"}
   //{ID:20,keyword:"命令词",ASR:"今天早上的闹钟",ASRTO:"好的，您想设几点几分的闹钟？"}
   //{ID:21,keyword:"命令词",ASR:"今天上午的闹钟",ASRTO:"好的，您想设几点几分的闹钟？"}
   //{ID:22,keyword:"命令词",ASR:"今天下午的闹钟",ASRTO:"好的，您想设几点几分的闹钟？"}
@@ -1719,17 +2111,89 @@ void setup()
   //{ID:1718,keyword:"命令词",ASR:"十二点五十八分",ASRTO:""}
   //{ID:1719,keyword:"命令词",ASR:"十二点五十九分",ASRTO:""}
   /* ---- 小时:把小时念回去让用户确认,再问分钟 ---- */
-  //{ID:242,keyword:"命令词",ASR:"关闭闹钟",ASRTO:"闹钟已关闭"}
-  //{ID:243,keyword:"命令词",ASR:"取消闹钟",ASRTO:"闹钟已关闭"}
-  //{ID:250,keyword:"命令词",ASR:"大声点",ASRTO:"好"}
-  //{ID:251,keyword:"命令词",ASR:"小声点",ASRTO:"好"}
+  //{ID:242,keyword:"命令词",ASR:"关闭闹钟",ASRTO:""}
+  //{ID:243,keyword:"命令词",ASR:"取消闹钟",ASRTO:""}
+  /* 带粒度的取消：不管说的是哪个时段，最终都是全部取消，
+   * 但先说一句“已经找到”让用户知道听懂了，再让他确认。 */
+  //{ID:245,keyword:"命令词",ASR:"取消下午的闹钟",ASRTO:""}
+  //{ID:246,keyword:"命令词",ASR:"取消今天下午的闹钟",ASRTO:""}
+  //{ID:247,keyword:"命令词",ASR:"全部取消",ASRTO:""}
+  /* 250 的回复音必须是“好”：ESP32 的开机问候拿它拼“早上好/晚上好”。
+   * 音量反馈改用 254/255，绝不能改 250 —— 否则问候会变成
+   * “晚上好，音量增加了”。 */
+  //{ID:250,keyword:"命令词",ASR:"增加音量",ASRTO:"好"}
+  //{ID:251,keyword:"命令词",ASR:"减小音量",ASRTO:"好"}
   //{ID:252,keyword:"命令词",ASR:"音量加",ASRTO:"好"}
   //{ID:253,keyword:"命令词",ASR:"音量减",ASRTO:"好"}
+  //{ID:254,keyword:"命令词",ASR:"播报音音量增加",ASRTO:"好的，音量增加了"}
+  //{ID:255,keyword:"命令词",ASR:"播报音音量减小",ASRTO:"好的，音量减小了"}
 
   /* ---- 用户跳过日期直接说时间时的提示(由 app 任务按 g_pending_ask = 400 播) ---- */
+  //{ID:407,keyword:"命令词",ASR:"播报音找到要取消的闹钟",ASRTO:"已经找到要取消的闹钟，是否要全部取消？"}
+  //{ID:409,keyword:"命令词",ASR:"播报音闹钟全部取消",ASRTO:"好，我已经把闹钟全部取消"}
+  //{ID:410,keyword:"命令词",ASR:"播报音闹钟已满",ASRTO:"已帮你找到两个已经设定好的闹钟，已超出范围，需要帮你取消闹钟，是否要全部取消？"}
+  //{ID:411,keyword:"命令词",ASR:"播报音闹钟没存上",ASRTO:"闹钟没存上，请再说一遍"}
+  //{ID:412,keyword:"命令词",ASR:"播报音没听懂",ASRTO:"抱歉，我还在学习，暂不支持此功能。"}
+  //{ID:413,keyword:"命令词",ASR:"播报音没听清",ASRTO:"抱歉，我没听清，请再说一遍"}
+  /* ---- 计时器：正计时 3 条 + 倒计时 13 档 + 取消 1 条 ---- */
+  //{ID:414,keyword:"命令词",ASR:"开始计时",ASRTO:""}
+  //{ID:415,keyword:"命令词",ASR:"停止计时",ASRTO:""}
+  //{ID:416,keyword:"命令词",ASR:"取消计时",ASRTO:""}
+  //{ID:417,keyword:"命令词",ASR:"倒计时一分钟",ASRTO:""}
+  //{ID:418,keyword:"命令词",ASR:"倒计时二分钟",ASRTO:""}
+  //{ID:419,keyword:"命令词",ASR:"倒计时三分钟",ASRTO:""}
+  //{ID:420,keyword:"命令词",ASR:"倒计时四分钟",ASRTO:""}
+  //{ID:421,keyword:"命令词",ASR:"倒计时五分钟",ASRTO:""}
+  //{ID:422,keyword:"命令词",ASR:"倒计时八分钟",ASRTO:""}
+  //{ID:423,keyword:"命令词",ASR:"倒计时十分钟",ASRTO:""}
+  //{ID:424,keyword:"命令词",ASR:"倒计时十五分钟",ASRTO:""}
+  //{ID:425,keyword:"命令词",ASR:"倒计时二十分钟",ASRTO:""}
+  //{ID:426,keyword:"命令词",ASR:"倒计时二十五分钟",ASRTO:""}
+  //{ID:427,keyword:"命令词",ASR:"倒计时三十分钟",ASRTO:""}
+  //{ID:428,keyword:"命令词",ASR:"倒计时四十五分钟",ASRTO:""}
+  //{ID:429,keyword:"命令词",ASR:"倒计时六十分钟",ASRTO:""}
+  //{ID:430,keyword:"命令词",ASR:"取消倒计时",ASRTO:""}
+  //{ID:431,keyword:"命令词",ASR:"播报音秒",ASRTO:"秒"}
+  //{ID:432,keyword:"命令词",ASR:"播报音时间到了",ASRTO:"您好，时间到了"}
+  //{ID:433,keyword:"命令词",ASR:"播报音开始计时",ASRTO:"好的，开始计时"}
+  //{ID:434,keyword:"命令词",ASR:"播报音已取消计时",ASRTO:"已取消计时"}
+  //{ID:435,keyword:"命令词",ASR:"播报音开始倒计时",ASRTO:"好的，开始倒计时"}
+  //{ID:436,keyword:"命令词",ASR:"播报音已取消倒计时",ASRTO:"已取消倒计时"}
+  //{ID:437,keyword:"命令词",ASR:"播报音这次计时时间为",ASRTO:"这次计时时间为"}
+  /* “两分钟”是口语，词表里只有“二分钟”，不补会误识别成“八分钟”。 */
+  //{ID:438,keyword:"命令词",ASR:"倒计时两分钟",ASRTO:""}
+  /* 引导语问的是“早上、上午、中午、下午、还是晚上”，用户照着只答两个字，
+   * 但词表里原来只有“XX的闹钟”这类整句，没有单独的时段词 ——
+   * ASRPRO 只能硬匹配最像的一条，“上午/下午”只差一个音节，经常认错。
+   * 这里把六个时段词单独立条，照着引导语答就能命中。
+   * “中午”按下午折算（12 点的那条 hour==12 分支会保持 12）。 */
+  //{ID:439,keyword:"命令词",ASR:"早上",ASRTO:""}
+  //{ID:440,keyword:"命令词",ASR:"上午",ASRTO:""}
+  //{ID:441,keyword:"命令词",ASR:"中午",ASRTO:""}
+  //{ID:442,keyword:"命令词",ASR:"下午",ASRTO:""}
+  //{ID:443,keyword:"命令词",ASR:"晚上",ASRTO:""}
+  //{ID:444,keyword:"命令词",ASR:"凌晨",ASRTO:""}
+  /* “帮我定个〈日期〉的闹钟”——不带时段的入口句。
+   * 原来只有“帮我定个今天下午的闹钟”这类带时段的，用户少说一个时段就完全没反应。 */
+  //{ID:445,keyword:"命令词",ASR:"帮我定个今天的闹钟",ASRTO:""}
+  //{ID:446,keyword:"命令词",ASR:"帮我定个明天的闹钟",ASRTO:""}
+  //{ID:447,keyword:"命令词",ASR:"帮我定个每天的闹钟",ASRTO:""}
+  /* 纯入口词。词表里原来只到“帮我定个早上的闹钟”，用户说“帮我定个闹钟”
+   * 会被硬匹配到“早上”那条，st_period 被预设成 0，后面就跳过了时段提问，
+   * 三点半被当成 03:30。这条必须把四项状态全部清空。 */
+  //{ID:448,keyword:"命令词",ASR:"帮我定个闹钟",ASRTO:""}
   //{ID:400,keyword:"命令词",ASR:"播报音先说日期",ASRTO:"请先说是今天的、明天的、还是每天的"}
   /* ---- 只说时段、且日期还不知道时问的一句;用户已先说日期就直接问时间 ---- */
   //{ID:401,keyword:"命令词",ASR:"播报音问日期",ASRTO:"好的，是今天的、明天的、还是每天的？"}
   /* ---- 闹钟响铃播报的最后一句(前面依次是问候/时间/天气,由 ESP32 拼) ---- */
   //{ID:402,keyword:"命令词",ASR:"播报音记得起床",ASRTO:"记得按时起床哦"}
+  /* ---- 天气播报用的补充片段：四大类归并后的“雨/雪”，以及气温句式 ----
+   * 「今天杭州天气晴，气温 20 到 25 摄氏度」需要这几个词。
+   * 城市片段自带“天气”后缀（如 175=杭州天气），所以不需要单独的“天气是”。
+   * ASR 写成“播报音XX”保证不会被用户误触发，只用 ASRTO 那一半。 ---- */
+  //{ID:403,keyword:"命令词",ASR:"播报音雨",ASRTO:"雨"}
+  //{ID:404,keyword:"命令词",ASR:"播报音雪",ASRTO:"雪"}
+  //{ID:405,keyword:"命令词",ASR:"播报音气温",ASRTO:"气温"}
+  //{ID:406,keyword:"命令词",ASR:"播报音摄氏度",ASRTO:"摄氏度"}
+  //{ID:408,keyword:"命令词",ASR:"播报音到",ASRTO:"到"}
 }

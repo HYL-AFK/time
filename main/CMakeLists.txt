@@ -9,6 +9,7 @@ idf_component_register(
         "drivers/button.c"
         "middle/wifi_manager.c"
         "middle/time_service.c"
+        "middle/timer_service.c"
         "middle/asrpro.c"
         "middle/link_probe.c"
         "middle/ble_provision.c"

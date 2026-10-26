@@ -382,6 +382,8 @@ clock_status_t clock_status_transition(clock_status_t current, clock_event_t eve
     case CLOCK_EVENT_TIME_SYNCING:
         return current == CLOCK_STATUS_FAULT ? current : CLOCK_STATUS_CALIBRATING;
     case CLOCK_EVENT_SYNC_FAILED:
+    case CLOCK_EVENT_NETWORK_FAILED:
+    case CLOCK_EVENT_DATA_FAILED:
         return CLOCK_STATUS_FAULT;
     case CLOCK_EVENT_TIME_SYNCED:
         return CLOCK_STATUS_WORKING;

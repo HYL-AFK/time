@@ -32,6 +32,11 @@ typedef struct {
 } link_status_t;
 
 esp_err_t link_probe_init(void);
+
+/* 链路状态变化回调（INIT/LINK/READY/OFFLINE）。
+ * 心跳连续 3 次超时就会报 OFFLINE，上层用它点亮灯环的异常提示。 */
+typedef void (*link_state_cb_t)(link_state_t state);
+void link_probe_set_state_callback(link_state_cb_t cb);
 void      link_probe_get_status(link_status_t *out);
 const char *link_state_name(link_state_t s);
 
@@ -52,3 +57,16 @@ esp_err_t link_probe_send_say(const uint16_t *ids, int count);
 /* 主动播报：整点报时、开机问候。走 T_ANNOUNCE，ASRPRO 只播片段，
  * 不会进入 20 秒唤醒态（否则报时完会自己冒出一句“我退下了”）。 */
 esp_err_t link_probe_announce(const uint16_t *ids, int count);
+
+/* 播放 TF 卡根目录的第 index 个文件（整点提示音 001~012 / 闹钟铃声 101）。 */
+esp_err_t link_probe_play(uint8_t index);
+
+/* 立即停止当前音频播放。 */
+esp_err_t link_probe_stop(void);
+
+/* 设置音量（0~100）。BOOT 短按静音就是调到 0。 */
+esp_err_t link_probe_set_volume(uint8_t volume);
+
+/* 告知 ASRPRO 两个闹钟槽位已满：播“已帮你找到两个…需要帮你取消闹钟”，
+ * 并进入“是否全部取消”的确认状态。 */
+esp_err_t link_probe_alarm_full(void);

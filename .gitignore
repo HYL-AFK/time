@@ -26,6 +26,8 @@ build/
 
 # ESP-IDF specific build outputs
 *.bin
+# 测试 demo 固件要随仓库分发，单独放行
+!firmware/*.bin
 *.elf
 *.map
 flasher_args.json # Generated in build directory
