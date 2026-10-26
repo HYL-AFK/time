@@ -4,10 +4,11 @@
   "idf.openOcdConfigs": [
     "board/esp32c3-builtin.cfg"
   ],
-  "idf.portWin": "COM16",
   "idf.currentSetup": "d:\\app\\Espressif\\FrameWork\\v5.3.4\\esp-idf",
+  "idf.eimIdfJsonPath": "d:\\Project\\time\\.vscode\\eim_idf.json",
   "idf.customExtraVars": {
-    "IDF_TARGET": "esp32c3"
+    "IDF_TARGET": "esp32c3",
+    "IDF_TOOLS_PATH": "d:\\app\\Espressif"
   },
   "clangd.path": "d:\\app\\Espressif\\tools\\esp-clang\\16.0.1-fe4f10a809\\esp-clang\\bin\\clangd.exe",
   "clangd.arguments": [
@@ -15,5 +16,6 @@
     "--query-driver=**",
     "--compile-commands-dir=d:\\Project\\time\\build"
   ],
-  "idf.flashType": "UART"
+  "idf.flashType": "UART",
+  "idf.port": "COM16"
 }
