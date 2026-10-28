@@ -1,0 +1,318 @@
+<mxfile host="app.diagrams.net" agent="Qoder" version="24.7.17" type="device">
+  <diagram id="asr-sequence" name="ASR对话时序图">
+    <mxGraphModel dx="1800" dy="1000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="3100" pageHeight="2900" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="title" value="WiTime 时钟 · ASR 语音对话时序图（泳道：用户 / ASRPRO / ESP32 / 外设）" style="text;html=1;fontSize=20;fontStyle=1;align=left;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="40" y="20" width="1400" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="subtitle" value="从上往下读就是一次真实对话：实线箭头 = 消息传递（相邻泳道之间横向走）　　灰虚线框 = 该泳道内部处理（不外发）　　每节末尾的「失败路径」是并列分支，不是顺序执行" style="text;html=1;fontSize=12;align=left;verticalAlign=middle;fontColor=#333333;" vertex="1" parent="1">
+          <mxGeometry x="40" y="58" width="3020" height="24" as="geometry" />
+        </mxCell>
+
+        <mxCell id="lh_u" value="用户" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#E8E8E8;strokeColor=#000000;fontSize=14;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="180" y="90" width="340" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="lh_a" value="ASRPRO V5.0（离线语音）" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#E8E8E8;strokeColor=#000000;fontSize=14;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="980" y="90" width="340" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="lh_p" value="ESP32-C3（业务逻辑）" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#E8E8E8;strokeColor=#000000;fontSize=14;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1780" y="90" width="340" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="lh_x" value="外设 / 存储（NVS · TF卡 · LED · 网络）" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#E8E8E8;strokeColor=#000000;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="2520" y="90" width="460" height="50" as="geometry" />
+        </mxCell>
+
+        <mxCell id="ll_u" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#999999;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="349" y="145" width="2" height="2700" as="geometry" />
+        </mxCell>
+        <mxCell id="ll_a" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#999999;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="1149" y="145" width="2" height="2700" as="geometry" />
+        </mxCell>
+        <mxCell id="ll_p" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#999999;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="1949" y="145" width="2" height="2700" as="geometry" />
+        </mxCell>
+        <mxCell id="ll_x" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#999999;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="2749" y="145" width="2" height="2700" as="geometry" />
+        </mxCell>
+
+        <mxCell id="sep1" value="① 唤醒与分发" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=13;fontStyle=1;align=left;spacingLeft=12;" vertex="1" parent="1">
+          <mxGeometry x="40" y="160" width="3020" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="m1" value="「小爱同学」（唤醒词，离线本地识别）" style="html=1;endArrow=block;endFill=1;rounded=0;strokeColor=#000000;fontSize=10;labelBackgroundColor=#FFFFFF;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="350" y="220" as="sourcePoint" />
+            <mxPoint x="1150" y="220" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m2" value="「我在」（prompt_play_by_cmd_id(0)）" style="html=1;endArrow=block;endFill=1;rounded=0;strokeColor=#000000;fontSize=10;labelBackgroundColor=#FFFFFF;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1150" y="262" as="sourcePoint" />
+            <mxPoint x="350" y="262" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="s1" value="开启 20 秒识别窗口；每识别一次自动续期 20 秒" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#999999;dashed=1;dashPattern=1 2;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="980" y="292" width="340" height="38" as="geometry" />
+        </mxCell>
+        <mxCell id="m3" value="任意命令词（时间 / 天气 / 闹钟 / 取消 / 音量 / 音乐）" style="html=1;endArrow=block;endFill=1;rounded=0;strokeColor=#000000;fontSize=10;labelBackgroundColor=#FFFFFF;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="350" y="352" as="sourcePoint" />
+            <mxPoint x="1150" y="352" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="s2" value="st_reset() 清空四空收集器 → app() 按 snid 分发" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#999999;dashed=1;dashPattern=1 2;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="980" y="382" width="340" height="38" as="geometry" />
+        </mxCell>
+
+        <mxCell id="sep2" value="② 场景：现在几点" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=13;fontStyle=1;align=left;spacingLeft=12;" vertex="1" parent="1">
+          <mxGeometry x="40" y="440" width="3020" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="m4" value="「现在几点」/「几点了」" style="html=1;endArrow=block;endFill=1;rounded=0;strokeColor=#000000;fontSize=10;labelBackgroundColor=#FFFFFF;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="350" y="500" as="sourcePoint" />
+            <mxPoint x="1150" y="500" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m5" value="「现在时间是」（ASRTO 自带，立刻出声）" style="html=1;endArrow=block;endFill=1;rounded=0;strokeColor=#000000;fontSize=10;labelBackgroundColor=#FFFFFF;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1150" y="542" as="sourcePoint" />
+            <mxPoint x="350" y="542" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m6" value="ASK TIME" style="html=1;endArrow=block;endFill=1;rounded=0;strokeColor=#000000;fontSize=10;labelBackgroundColor=#FFFFFF;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1150" y="592" as="sourcePoint" />
+            <mxPoint x="1950" y="592" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="s3" value="检查 s_time_valid（是否已 SNTP 校时）" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#999999;dashed=1;dashPattern=1 2;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1780" y="622" width="340" height="38" as="geometry" />
+        </mxCell>
+        <mxCell id="m7" value="SAY 120 123 125 121 123 128（点 + 时 + 分 + 零 + 分），未校时则 SAY 134" style="html=1;endArrow=block;endFill=1;rounded=0;strokeColor=#000000;fontSize=10;labelBackgroundColor=#FFFFFF;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1950" y="690" as="sourcePoint" />
+            <mxPoint x="1150" y="690" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m8" value="「现在时间是 15 点 05 分」（逐段拼接播出）" style="html=1;endArrow=block;endFill=1;rounded=0;strokeColor=#000000;fontSize=10;labelBackgroundColor=#FFFFFF;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1150" y="732" as="sourcePoint" />
+            <mxPoint x="350" y="732" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m8b" value="「时间还没校准」（失败路径：未校时时问时间）" style="html=1;endArrow=block;endFill=1;rounded=0;strokeColor=#000000;fontSize=10;labelBackgroundColor=#FFFFFF;dashed=1;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1150" y="780" as="sourcePoint" />
+            <mxPoint x="350" y="780" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="sep3" value="③ 场景：今天天气" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=13;fontStyle=1;align=left;spacingLeft=12;" vertex="1" parent="1">
+          <mxGeometry x="40" y="830" width="3020" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="m9" value="「今天天气」/「天气怎么样」" style="html=1;endArrow=block;endFill=1;rounded=0;strokeColor=#000000;fontSize=10;labelBackgroundColor=#FFFFFF;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="350" y="890" as="sourcePoint" />
+            <mxPoint x="1150" y="890" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m10" value="「今天」（ASRTO 自带，不等网络立刻出声）" style="html=1;endArrow=block;endFill=1;rounded=0;strokeColor=#000000;fontSize=10;labelBackgroundColor=#FFFFFF;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1150" y="932" as="sourcePoint" />
+            <mxPoint x="350" y="932" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m11" value="ASK WEATHER" style="html=1;endArrow=block;endFill=1;rounded=0;strokeColor=#000000;fontSize=10;labelBackgroundColor=#FFFFFF;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1150" y="982" as="sourcePoint" />
+            <mxPoint x="1950" y="982" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="s4" value="city_fragment()：normalize_city() 归一化后查 k_city_fragments（70 城），未命中用 165 兜底" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#999999;dashed=1;dashPattern=1 2;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1710" y="1012" width="480" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="s5" value="判 s_has_weather；index 9 与 index 15 相同则只念一个现象，不同则插 161「转」" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#999999;dashed=1;dashPattern=1 2;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1710" y="1072" width="480" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="m12" value="SAY 177 137 161 138 156 125 133 128 158 157 …（无缓存则 SAY 160）" style="html=1;endArrow=block;endFill=1;rounded=0;strokeColor=#000000;fontSize=10;labelBackgroundColor=#FFFFFF;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1950" y="1152" as="sourcePoint" />
+            <mxPoint x="1150" y="1152" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m13" value="「杭州天气」→「晴间多云」→「转」→「多云」→「最高二十五度」→「最低十六度」" style="html=1;endArrow=block;endFill=1;rounded=0;strokeColor=#000000;fontSize=10;labelBackgroundColor=#FFFFFF;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1150" y="1194" as="sourcePoint" />
+            <mxPoint x="350" y="1194" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m13b" value="「天气还没更新」（失败路径：校时未成功、无缓存）" style="html=1;endArrow=block;endFill=1;rounded=0;strokeColor=#000000;fontSize=10;labelBackgroundColor=#FFFFFF;dashed=1;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1150" y="1242" as="sourcePoint" />
+            <mxPoint x="350" y="1242" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="sep4" value="④ 场景：设置闹钟（引导式四空收集：日期 / 时段 / 小时 / 分钟）" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=13;fontStyle=1;align=left;spacingLeft=12;" vertex="1" parent="1">
+          <mxGeometry x="40" y="1290" width="3020" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="m14" value="「下午的闹钟」/「帮我定个下午的闹钟」/「下午定个闹钟」（只给时段，日期留空）" style="html=1;endArrow=block;endFill=1;rounded=0;strokeColor=#000000;fontSize=10;labelBackgroundColor=#FFFFFF;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="350" y="1350" as="sourcePoint" />
+            <mxPoint x="1150" y="1350" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m15" value="「好的，是今天的还是明天的？」（st_period 已记，st_day 待补）" style="html=1;endArrow=block;endFill=1;rounded=0;strokeColor=#000000;fontSize=10;labelBackgroundColor=#FFFFFF;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1150" y="1392" as="sourcePoint" />
+            <mxPoint x="350" y="1392" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m16" value="「今天」/「明天」（若上一句已带日期，本轮直接跳过）" style="html=1;endArrow=block;endFill=1;rounded=0;strokeColor=#000000;fontSize=10;labelBackgroundColor=#FFFFFF;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="350" y="1434" as="sourcePoint" />
+            <mxPoint x="1150" y="1434" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m17" value="「好的，您想设几点的闹钟？」（g_pending_ask = 163）" style="html=1;endArrow=block;endFill=1;rounded=0;strokeColor=#000000;fontSize=10;labelBackgroundColor=#FFFFFF;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1150" y="1476" as="sourcePoint" />
+            <mxPoint x="350" y="1476" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m18" value="「三点」" style="html=1;endArrow=block;endFill=1;rounded=0;strokeColor=#000000;fontSize=10;labelBackgroundColor=#FFFFFF;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="350" y="1518" as="sourcePoint" />
+            <mxPoint x="1150" y="1518" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m19" value="「好的，您想设三点几分的闹钟」" style="html=1;endArrow=block;endFill=1;rounded=0;strokeColor=#000000;fontSize=10;labelBackgroundColor=#FFFFFF;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1150" y="1560" as="sourcePoint" />
+            <mxPoint x="350" y="1560" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m20" value="「整点」/「十五分」（整点说「整点」，不说「零分」）" style="html=1;endArrow=block;endFill=1;rounded=0;strokeColor=#000000;fontSize=10;labelBackgroundColor=#FFFFFF;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="350" y="1602" as="sourcePoint" />
+            <mxPoint x="1150" y="1602" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="s6" value="alarm_report()：四空齐 → 12→24 制换算（下午 +12）→ 15:00" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#999999;dashed=1;dashPattern=1 2;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="980" y="1632" width="340" height="38" as="geometry" />
+        </mxCell>
+        <mxCell id="m21" value="ALARM 0 15:00（0 = 今天，1 = 明天）" style="html=1;endArrow=block;endFill=1;rounded=0;strokeColor=#000000;fontSize=10;labelBackgroundColor=#FFFFFF;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1150" y="1700" as="sourcePoint" />
+            <mxPoint x="1950" y="1700" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="s7" value="校验 s_time_valid；delta = tgt - now + day × 86400；delta ≤ 0 则顺延到明天并标记" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#999999;dashed=1;dashPattern=1 2;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1710" y="1730" width="480" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="m22" value="写 NVS：has_alarm = true + alarm_target_epoch" style="html=1;endArrow=block;endFill=1;rounded=0;strokeColor=#000000;fontSize=10;labelBackgroundColor=#FFFFFF;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1950" y="1820" as="sourcePoint" />
+            <mxPoint x="2750" y="1820" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m23" value="SAY 135（顺延到明天则是 SAY 162 135）" style="html=1;endArrow=block;endFill=1;rounded=0;strokeColor=#000000;fontSize=10;labelBackgroundColor=#FFFFFF;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1950" y="1872" as="sourcePoint" />
+            <mxPoint x="1150" y="1872" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m24" value="「好的，已经帮你设定好闹钟了」（顺延则先说「今天已经过了，帮你改到明天」）" style="html=1;endArrow=block;endFill=1;rounded=0;strokeColor=#000000;fontSize=10;labelBackgroundColor=#FFFFFF;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1150" y="1914" as="sourcePoint" />
+            <mxPoint x="350" y="1914" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m24b" value="「时间还没校准」（失败路径：未校时时设闹钟，直接拒绝不写入）" style="html=1;endArrow=block;endFill=1;rounded=0;strokeColor=#000000;fontSize=10;labelBackgroundColor=#FFFFFF;dashed=1;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1150" y="1962" as="sourcePoint" />
+            <mxPoint x="350" y="1962" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="sep5" value="⑤ 场景：到点响铃（一次性）" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=13;fontStyle=1;align=left;spacingLeft=12;" vertex="1" parent="1">
+          <mxGeometry x="40" y="2010" width="3020" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="s9" value="daily_task() 每秒判：now ≥ alarm_target_epoch" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#999999;dashed=1;dashPattern=1 2;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1780" y="2070" width="340" height="38" as="geometry" />
+        </mxCell>
+        <mxCell id="s10" value="overdue &gt; 300 s → 静默丢弃（重启后不补响，日志 stale alarm dropped）" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#999999;dashed=1;dashPattern=1 2;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="1710" y="2118" width="480" height="38" as="geometry" />
+        </mxCell>
+        <mxCell id="m25" value="led_ring 灯效 + TF 卡音乐（响铃）" style="html=1;endArrow=block;endFill=1;rounded=0;strokeColor=#000000;fontSize=10;labelBackgroundColor=#FFFFFF;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1950" y="2190" as="sourcePoint" />
+            <mxPoint x="2750" y="2190" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m26" value="响完清 NVS（一次性闹钟，不会第二天再响）" style="html=1;endArrow=block;endFill=1;rounded=0;strokeColor=#000000;fontSize=10;labelBackgroundColor=#FFFFFF;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1950" y="2242" as="sourcePoint" />
+            <mxPoint x="2750" y="2242" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="sep6" value="⑥ 场景：取消闹钟 / 调音量 / 播放音乐" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=13;fontStyle=1;align=left;spacingLeft=12;" vertex="1" parent="1">
+          <mxGeometry x="40" y="2290" width="3020" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="m27" value="「取消闹钟」/「关闭闹钟」" style="html=1;endArrow=block;endFill=1;rounded=0;strokeColor=#000000;fontSize=10;labelBackgroundColor=#FFFFFF;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="350" y="2350" as="sourcePoint" />
+            <mxPoint x="1150" y="2350" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m28" value="「闹钟已关闭」（ASRTO 自带）" style="html=1;endArrow=block;endFill=1;rounded=0;strokeColor=#000000;fontSize=10;labelBackgroundColor=#FFFFFF;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1150" y="2392" as="sourcePoint" />
+            <mxPoint x="350" y="2392" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m29" value="ALARM OFF" style="html=1;endArrow=block;endFill=1;rounded=0;strokeColor=#000000;fontSize=10;labelBackgroundColor=#FFFFFF;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1150" y="2442" as="sourcePoint" />
+            <mxPoint x="1950" y="2442" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m30" value="清 has_alarm + 擦 NVS + 停铃（响铃中也能随时打断）" style="html=1;endArrow=block;endFill=1;rounded=0;strokeColor=#000000;fontSize=10;labelBackgroundColor=#FFFFFF;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1950" y="2484" as="sourcePoint" />
+            <mxPoint x="2750" y="2484" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m31" value="「大声点」/「小声点」/「音量加」/「音量减」" style="html=1;endArrow=block;endFill=1;rounded=0;strokeColor=#000000;fontSize=10;labelBackgroundColor=#FFFFFF;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="350" y="2536" as="sourcePoint" />
+            <mxPoint x="1150" y="2536" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="s11" value="volumeUp() / volumeDown()：本地调 TF 卡音量 ±10，夹取 0~100（不外发 ESP32）" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#999999;dashed=1;dashPattern=1 2;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="960" y="2566" width="380" height="38" as="geometry" />
+        </mxCell>
+        <mxCell id="m32" value="「播放音乐」" style="html=1;endArrow=block;endFill=1;rounded=0;strokeColor=#000000;fontSize=10;labelBackgroundColor=#FFFFFF;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="350" y="2636" as="sourcePoint" />
+            <mxPoint x="1150" y="2636" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m33" value="playMp3Folder() 播 TF 卡音乐" style="html=1;endArrow=block;endFill=1;rounded=0;strokeColor=#000000;fontSize=10;labelBackgroundColor=#FFFFFF;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1150" y="2686" as="sourcePoint" />
+            <mxPoint x="2750" y="2686" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="note" value="读图提示：&lt;br&gt;• 播报永远是「ESP32 用 SAY 帧把片段 ID 列表发给 ASRPRO，ASRPRO 逐段播放」，不是 ASRPRO 自己说话。&lt;br&gt;• 标记为「失败路径」的箭头是并列分支，只在条件不满足时发生，不是顺序执行。&lt;br&gt;• ASRPRO 无 TTS，所有语音都是预生成音频片段；「ASRTO 自带」的句子不与 ESP32 交互，离线也能出声。&lt;br&gt;• 遗留项：合成音音量与 TF 卡音量是两套参数，调音量只影响其中一路。" style="text;html=1;fontSize=12;align=left;verticalAlign=top;fillColor=#F5F5F5;strokeColor=#999999;" vertex="1" parent="1">
+          <mxGeometry x="40" y="2760" width="3020" height="100" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

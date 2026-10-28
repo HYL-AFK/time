@@ -1,0 +1,548 @@
+<mxfile host="app.diagrams.net" agent="Qoder" version="24.7.17" type="device">
+  <diagram id="asr-dialog-e2e" name="ASR对话流程-端到端">
+    <mxGraphModel dx="1800" dy="1000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="3400" pageHeight="2550" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="title" value="WiTime 时钟 · ASR 语音对话流程（端到端：ASRPRO V5.0 &#8596; ESP32-C3）" style="text;html=1;fontSize=20;fontStyle=1;align=left;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="40" y="20" width="1000" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="subtitle" value="主流程横排在顶部，经「命令词分发总线」下发到各功能列；各列的播报请求向下汇入「SAY 总线」，统一交给底部播报通道。&lt;br&gt;实线 = 正常流转　　虚线 = 失败 / 拒绝 / 回退　　虚线边框的节点 = 失败分支或遗留项　　灰底横条 = 总线" style="text;html=1;fontSize=12;align=left;verticalAlign=middle;fontColor=#333333;" vertex="1" parent="1">
+          <mxGeometry x="40" y="58" width="3260" height="40" as="geometry" />
+        </mxCell>
+
+        <mxCell id="sec1" value="① 主流程（唤醒 + 分发）" style="text;html=1;fontSize=14;fontStyle=1;align=left;" vertex="1" parent="1">
+          <mxGeometry x="40" y="95" width="400" height="25" as="geometry" />
+        </mxCell>
+        <mxCell id="n1" value="asrpro_power_on&lt;br&gt;上电：加载识别词表与音频表&lt;br&gt;Serial2 起 ASRPRO &#8596; ESP32 链路" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="40" y="125" width="330" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="n2" value="asrpro_main_loop()&lt;br&gt;主循环：等待唤醒词" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="410" y="125" width="330" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="k1" value="检测到唤醒词&lt;br&gt;「小爱同学」？" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="780" y="115" width="290" height="95" as="geometry" />
+        </mxCell>
+        <mxCell id="n3" value="prompt_play_by_cmd_id(0)&lt;br&gt;播「我在」；开启 20 秒识别窗口&lt;br&gt;（每识别一次自动续期 20 秒）" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1110" y="125" width="360" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="k2" value="20 秒内识别到&lt;br&gt;命令词？" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1510" y="115" width="290" height="95" as="geometry" />
+        </mxCell>
+        <mxCell id="n4" value="st_reset()&lt;br&gt;清空四空收集器（st_day / st_period /&lt;br&gt;st_hour / st_min）" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1840" y="125" width="330" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="n5" value="app()&lt;br&gt;按 snid 分发命令词到各功能分支" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=11;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="2210" y="125" width="380" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="e_n1_n2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;" edge="1" parent="1" source="n1" target="n2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_n2_k1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;" edge="1" parent="1" source="n2" target="k1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_k1_n3" value="是" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;fontSize=11;" edge="1" parent="1" source="k1" target="n3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_k1_n2" value="否" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;fontSize=11;dashed=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="k1" target="n2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_n3_k2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;" edge="1" parent="1" source="n3" target="k2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_k2_n4" value="是" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;fontSize=11;" edge="1" parent="1" source="k2" target="n4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_k2_n2" value="否（超时）" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;fontSize=11;dashed=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="k2" target="n2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_n4_n5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;" edge="1" parent="1" source="n4" target="n5">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="bus1" value="命 令 词 分 发 总 线　　（app() 按 snid 下发；⑤ 闹钟·ESP32 列由 ④ 的 ALARM 串口帧触发，不在此分发）" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#E8E8E8;strokeColor=#000000;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="320" width="3260" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="e_n5_bus1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="n5" target="bus1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="sec2" value="② 时间类" style="text;html=1;fontSize=14;fontStyle=1;align=left;" vertex="1" parent="1">
+          <mxGeometry x="40" y="380" width="560" height="25" as="geometry" />
+        </mxCell>
+        <mxCell id="t1" value="case 30 / 31&lt;br&gt;识别词：现在几点、几点了&lt;br&gt;（ASRTO 自带「现在时间是」）" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="40" y="410" width="560" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="t2" value="Serial2.print(&quot;ASK TIME\n&quot;)&lt;br&gt;向 ESP32 上报时间查询请求" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="40" y="515" width="560" height="65" as="geometry" />
+        </mxCell>
+        <mxCell id="td1" value="ESP32：s_time_valid&lt;br&gt;已校时？" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="125" y="610" width="390" height="95" as="geometry" />
+        </mxCell>
+        <mxCell id="t3" value="speak_current_time()&lt;br&gt;取 localtime，拼片段：&lt;br&gt;SPK_POINT + 时 + SPK_MINUTE + 分&lt;br&gt;分钟 &lt; 10 时先插「零」(123)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="40" y="735" width="560" height="95" as="geometry" />
+        </mxCell>
+        <mxCell id="t4" value="speak_ids()&lt;br&gt;SAY 序列 →「现在时间是15点05分」" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="40" y="860" width="560" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="t5" value="asrpro_say(134)&lt;br&gt;播「时间还没校准」，本次结束" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;dashed=1;dashPattern=1 2;" vertex="1" parent="1">
+          <mxGeometry x="40" y="965" width="560" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="e_t1_t2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;" edge="1" parent="1" source="t1" target="t2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_t2_td1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;" edge="1" parent="1" source="t2" target="td1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_td1_t3" value="是" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;fontSize=11;" edge="1" parent="1" source="td1" target="t3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_td1_t5" value="否" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;fontSize=11;dashed=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="td1" target="t5">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_t3_t4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;" edge="1" parent="1" source="t3" target="t4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="sec3" value="③ 天气类" style="text;html=1;fontSize=14;fontStyle=1;align=left;" vertex="1" parent="1">
+          <mxGeometry x="705" y="380" width="560" height="25" as="geometry" />
+        </mxCell>
+        <mxCell id="w1" value="case 32 / 33&lt;br&gt;识别词：今天天气、天气怎么样&lt;br&gt;（ASRTO 自带「今天」，立刻出声）" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="705" y="410" width="560" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="w2" value="Serial2.print(&quot;ASK WEATHER\n&quot;)&lt;br&gt;向 ESP32 上报天气查询请求" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="705" y="515" width="560" height="65" as="geometry" />
+        </mxCell>
+        <mxCell id="w3" value="speak_current_weather()&lt;br&gt;按「城市 + 现象 + 最高 + 最低」拼片段序列" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="705" y="610" width="560" height="65" as="geometry" />
+        </mxCell>
+        <mxCell id="w4" value="city_fragment()&lt;br&gt;normalize_city() 去空格/撇号/连字符并转小写&lt;br&gt;再查 k_city_fragments 表（70 城，含拼音/中文/别名）" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="705" y="705" width="560" height="95" as="geometry" />
+        </mxCell>
+        <mxCell id="wd1" value="命中 k_city_fragments？" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="790" y="830" width="390" height="95" as="geometry" />
+        </mxCell>
+        <mxCell id="w5" value="城市片段 166~249&lt;br&gt;如 177 =「杭州天气」；166 北京，172 呼和浩特" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="705" y="955" width="560" height="65" as="geometry" />
+        </mxCell>
+        <mxCell id="w6" value="SPK_WEATHER_PLAIN 165&lt;br&gt;兜底：只说「天气」，日志打 city not matched" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;dashed=1;dashPattern=1 2;" vertex="1" parent="1">
+          <mxGeometry x="705" y="1050" width="560" height="65" as="geometry" />
+        </mxCell>
+        <mxCell id="wd2" value="s_has_weather 有天气缓存？" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="790" y="1145" width="390" height="95" as="geometry" />
+        </mxCell>
+        <mxCell id="w7" value="asrpro_say(160)&lt;br&gt;播「天气还没更新」，本次结束" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;dashed=1;dashPattern=1 2;" vertex="1" parent="1">
+          <mxGeometry x="705" y="1270" width="560" height="65" as="geometry" />
+        </mxCell>
+        <mxCell id="wd3" value="上午 9 点 == 下午 3 点？&lt;br&gt;（hourly 数组 index 9 / index 15）" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="790" y="1365" width="390" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="w8" value="只念一个天气现象&lt;br&gt;（SPK_WEATHER_BASE 136~155）" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="705" y="1505" width="560" height="65" as="geometry" />
+        </mxCell>
+        <mxCell id="w9" value="现象A + SPK_TURN 161「转」+ 现象B&lt;br&gt;例：晴间多云 + 转 + 多云" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="705" y="1600" width="560" height="65" as="geometry" />
+        </mxCell>
+        <mxCell id="w10" value="append_temperature()&lt;br&gt;SPK_TEMP_MAX + 数值 + SPK_DEGREE&lt;br&gt;SPK_TEMP_MIN + 数值 + SPK_DEGREE&lt;br&gt;数值 &lt; 0 时先插 SPK_BELOW_ZERO 159「零下」" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="705" y="1695" width="560" height="95" as="geometry" />
+        </mxCell>
+        <mxCell id="w11" value="speak_ids()&lt;br&gt;SAY 序列 →「今天杭州天气晴间多云转多云，最高二十五度，最低十六度」" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="705" y="1820" width="560" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="e_w1_w2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;" edge="1" parent="1" source="w1" target="w2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_w2_w3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;" edge="1" parent="1" source="w2" target="w3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_w3_w4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;" edge="1" parent="1" source="w3" target="w4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_w4_wd1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;" edge="1" parent="1" source="w4" target="wd1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_wd1_w5" value="是" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;fontSize=11;" edge="1" parent="1" source="wd1" target="w5">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_wd1_w6" value="否" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;fontSize=11;dashed=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="wd1" target="w6">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_w5_wd2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;" edge="1" parent="1" source="w5" target="wd2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_w6_wd2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;dashed=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="w6" target="wd2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_wd2_w7" value="否" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;fontSize=11;dashed=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="wd2" target="w7">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_wd2_wd3" value="是" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;fontSize=11;" edge="1" parent="1" source="wd2" target="wd3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_wd3_w8" value="是" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;fontSize=11;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="wd3" target="w8">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_wd3_w9" value="否" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;fontSize=11;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="wd3" target="w9">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_w8_w10" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;" edge="1" parent="1" source="w8" target="w10">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_w9_w10" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;" edge="1" parent="1" source="w9" target="w10">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_w10_w11" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;" edge="1" parent="1" source="w10" target="w11">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_bus1_t1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;exitX=0.02;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="bus1" target="t1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_bus1_w1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;exitX=0.18;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="bus1" target="w1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="sec4" value="④ 闹钟类 · ASRPRO 侧（引导式四空收集 + 上报）" style="text;html=1;fontSize=14;fontStyle=1;align=left;" vertex="1" parent="1">
+          <mxGeometry x="1370" y="380" width="560" height="25" as="geometry" />
+        </mxCell>
+        <mxCell id="a1" value="case 20~29 / 2~16 / 39,47~55&lt;br&gt;日期+时段组合（15 组 &#215; 3 句式）&lt;br&gt;「今天下午的闹钟」/「帮我定个今天下午的闹钟」/「今天下午定个闹钟」" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1370" y="410" width="560" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="a2" value="st_begin(day, period)&lt;br&gt;记下日期与时段，清小时/分钟" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1370" y="520" width="560" height="65" as="geometry" />
+        </mxCell>
+        <mxCell id="ad1" value="st_day &gt;= 0 日期已定？" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1455" y="615" width="390" height="95" as="geometry" />
+        </mxCell>
+        <mxCell id="a3" value="g_pending_ask = 163&lt;br&gt;问「好的，您想设几点的闹钟？」" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1370" y="740" width="560" height="65" as="geometry" />
+        </mxCell>
+        <mxCell id="a4" value="case 40~44 / 2~6 / 34~38&lt;br&gt;只说时段（5 时段 &#215; 3 句式）&lt;br&gt;「下午的闹钟」/「帮我定个下午的闹钟」/「下午定个闹钟」" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1370" y="835" width="560" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="a5" value="st_begin(-1, period)&lt;br&gt;只记时段，日期留空" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1370" y="955" width="560" height="65" as="geometry" />
+        </mxCell>
+        <mxCell id="a6" value="ASRTO 直接反问&lt;br&gt;「好的，是今天的还是明天的？」" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1370" y="1050" width="560" height="65" as="geometry" />
+        </mxCell>
+        <mxCell id="a7" value="case 45 / 46&lt;br&gt;识别词：今天、明天（ASRTO 留空）" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1370" y="1145" width="560" height="65" as="geometry" />
+        </mxCell>
+        <mxCell id="ad2" value="st_period &lt; 0&lt;br&gt;只填了日期、没时段？" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1455" y="1240" width="390" height="95" as="geometry" />
+        </mxCell>
+        <mxCell id="a8" value="g_pending_ask = 164&lt;br&gt;「请先说是上午还是下午的闹钟」&lt;br&gt;拒绝，不继续收集（防「八点」歧义）" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;dashed=1;dashPattern=1 2;" vertex="1" parent="1">
+          <mxGeometry x="1370" y="1365" width="560" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="a9" value="st_day = 0 / 1；g_pending_ask = 163" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1370" y="1485" width="560" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="a10" value="case 210~221&lt;br&gt;一点~十二点 → st_hour；alarm_report()" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1370" y="1575" width="560" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="a11" value="case 60~119&lt;br&gt;整点、一分~五十九分 → st_min；alarm_report()" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1370" y="1680" width="560" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="ad3" value="st_day / st_hour / st_min 三样齐了？" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1455" y="1785" width="390" height="95" as="geometry" />
+        </mxCell>
+        <mxCell id="a12" value="alarm_report()&lt;br&gt;12→24 制换算：下午 +12、晚上 +12、凌晨归零&lt;br&gt;（下午/晚上 12 点特殊处理）" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1370" y="1910" width="560" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="a13" value="Serial2.print(&quot;ALARM &lt;0|1&gt; HH:MM\n&quot;)&lt;br&gt;上报 ESP32：0=今天 1=明天" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1370" y="2030" width="560" height="65" as="geometry" />
+        </mxCell>
+        <mxCell id="e_a1_a2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;" edge="1" parent="1" source="a1" target="a2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_a2_ad1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;" edge="1" parent="1" source="a2" target="ad1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_ad1_a3" value="是" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;fontSize=11;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="ad1" target="a3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_ad1_a4" value="否" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;fontSize=11;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="ad1" target="a4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_a4_a5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;" edge="1" parent="1" source="a4" target="a5">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_a5_a6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;" edge="1" parent="1" source="a5" target="a6">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_a6_a7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;" edge="1" parent="1" source="a6" target="a7">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_a7_ad2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;" edge="1" parent="1" source="a7" target="ad2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_ad2_a8" value="是" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;fontSize=11;dashed=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="ad2" target="a8">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_ad2_a9" value="否" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;fontSize=11;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="ad2" target="a9">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_a3_a10" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;exitX=0;exitY=1;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="a3" target="a10">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_a9_a10" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;" edge="1" parent="1" source="a9" target="a10">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_a10_a11" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;" edge="1" parent="1" source="a10" target="a11">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_a11_ad3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;" edge="1" parent="1" source="a11" target="ad3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_ad3_a10" value="否（继续等输入）" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;fontSize=11;dashed=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="ad3" target="a10">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_ad3_a12" value="是" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;fontSize=11;" edge="1" parent="1" source="ad3" target="a12">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_a12_a13" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;" edge="1" parent="1" source="a12" target="a13">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="sec5" value="⑤ 闹钟类 · ESP32 侧（存储 + 判期 + 响铃）" style="text;html=1;fontSize=14;fontStyle=1;align=left;" vertex="1" parent="1">
+          <mxGeometry x="2035" y="380" width="560" height="25" as="geometry" />
+        </mxCell>
+        <mxCell id="b1" value="on_asrpro_line()&lt;br&gt;命中 &quot;ALARM &quot; 行" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="2035" y="410" width="560" height="65" as="geometry" />
+        </mxCell>
+        <mxCell id="bd1" value="s_time_valid 已校时？" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="2120" y="505" width="390" height="95" as="geometry" />
+        </mxCell>
+        <mxCell id="b2" value="asrpro_say(134)&lt;br&gt;「时间还没校准」，不写入并 return&lt;br&gt;（防止存了但永远不响的假成功）" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;dashed=1;dashPattern=1 2;" vertex="1" parent="1">
+          <mxGeometry x="2035" y="630" width="560" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="b3" value="解析 HH:MM → alarm_target_epoch&lt;br&gt;delta = tgt_sec - now_sec + day * 86400" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="2035" y="740" width="560" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="bd2" value="delta &lt;= 0&lt;br&gt;今天该时刻已过？" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="2120" y="840" width="390" height="95" as="geometry" />
+        </mxCell>
+        <mxCell id="b4" value="delta += 86400&lt;br&gt;pushed_to_tomorrow = true" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="2035" y="965" width="560" height="65" as="geometry" />
+        </mxCell>
+        <mxCell id="b5" value="写 NVS：has_alarm = true + alarm_target_epoch&lt;br&gt;（一次性闹钟，响完即清）" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="2035" y="1060" width="560" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="bd3" value="pushed_to_tomorrow？" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="2120" y="1160" width="390" height="95" as="geometry" />
+        </mxCell>
+        <mxCell id="b6" value="asrpro_say(162, 135)&lt;br&gt;「今天已经过了，帮你改到明天」+「已经帮你设定好闹钟了」" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="2035" y="1285" width="560" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="b7" value="asrpro_say(135)&lt;br&gt;「好的，已经帮你设定好闹钟了」" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="2035" y="1395" width="560" height="65" as="geometry" />
+        </mxCell>
+        <mxCell id="b8" value="daily_task()&lt;br&gt;每秒判：now &gt;= alarm_target_epoch？" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="2035" y="1490" width="560" height="65" as="geometry" />
+        </mxCell>
+        <mxCell id="bd4" value="overdue &gt; 300 s&lt;br&gt;过期太久（重启后补响）？" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="2120" y="1585" width="390" height="95" as="geometry" />
+        </mxCell>
+        <mxCell id="b9" value="静默丢弃 + 擦 NVS&lt;br&gt;日志：stale alarm dropped" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;dashed=1;dashPattern=1 2;" vertex="1" parent="1">
+          <mxGeometry x="2035" y="1710" width="560" height="65" as="geometry" />
+        </mxCell>
+        <mxCell id="b10" value="响铃：led_ring 灯效 + TF 卡音乐&lt;br&gt;响完清 has_alarm（一次性，不会第二天再响）" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="2035" y="1805" width="560" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="e_a13_b1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="a13" target="b1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_b1_bd1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;" edge="1" parent="1" source="b1" target="bd1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_bd1_b2" value="否" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;fontSize=11;dashed=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="bd1" target="b2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_bd1_b3" value="是" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;fontSize=11;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="bd1" target="b3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_b3_bd2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;" edge="1" parent="1" source="b3" target="bd2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_bd2_b4" value="是" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;fontSize=11;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="bd2" target="b4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_bd2_b5" value="否" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;fontSize=11;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="bd2" target="b5">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_b4_b5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;" edge="1" parent="1" source="b4" target="b5">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_b5_bd3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;" edge="1" parent="1" source="b5" target="bd3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_bd3_b6" value="是" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;fontSize=11;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="bd3" target="b6">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_bd3_b7" value="否" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;fontSize=11;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="bd3" target="b7">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_b6_b8" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;exitX=0;exitY=1;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="b6" target="b8">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_b7_b8" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;" edge="1" parent="1" source="b7" target="b8">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_b8_bd4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;" edge="1" parent="1" source="b8" target="bd4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_bd4_b9" value="是" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;fontSize=11;dashed=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="bd4" target="b9">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_bd4_b10" value="否" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;fontSize=11;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="bd4" target="b10">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="sec6" value="⑥ 取消闹钟 / 音量 / 音乐" style="text;html=1;fontSize=14;fontStyle=1;align=left;" vertex="1" parent="1">
+          <mxGeometry x="2700" y="380" width="560" height="25" as="geometry" />
+        </mxCell>
+        <mxCell id="c1" value="case 242 / 243&lt;br&gt;取消闹钟、关闭闹钟&lt;br&gt;（ASRTO 自带「闹钟已关闭」）" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="2700" y="410" width="560" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="c2" value="Serial2.print(&quot;ALARM OFF\n&quot;)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="2700" y="515" width="560" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="c3" value="ESP32：清 has_alarm + 擦 NVS + 停铃&lt;br&gt;（响铃中也能随时打断）" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="2700" y="605" width="560" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="c4" value="case 250~253&lt;br&gt;大声点、小声点、音量加、音量减&lt;br&gt;（ASRTO 自带「好」）" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="2700" y="705" width="560" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="c5" value="volumeUp() / volumeDown()&lt;br&gt;ASRPRO 本地调 TF 卡音量 &#177;10，夹取到 0~100&lt;br&gt;不经过 ESP32" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="2700" y="810" width="560" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="c6" value="case 1&lt;br&gt;识别词：播放音乐 → playMp3Folder()" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="2700" y="915" width="560" height="65" as="geometry" />
+        </mxCell>
+        <mxCell id="c7" value="遗留项：合成音音量与 TF 卡音量是两套参数&lt;br&gt;目前未做联动，调音量只影响其中一路" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;dashed=1;dashPattern=1 2;" vertex="1" parent="1">
+          <mxGeometry x="2700" y="1010" width="560" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="e_c1_c2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;" edge="1" parent="1" source="c1" target="c2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_c2_c3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;" edge="1" parent="1" source="c2" target="c3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_c4_c5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;" edge="1" parent="1" source="c4" target="c5">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_c6_c7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;dashed=1;" edge="1" parent="1" source="c6" target="c7">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_bus1_a1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;exitX=0.42;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="bus1" target="a1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_bus1_c1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;exitX=0.83;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="bus1" target="c1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_bus1_c4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;exitX=0.83;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="bus1" target="c4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_bus1_c6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;exitX=0.83;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="bus1" target="c6">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="bus2" value="SAY 总 线　　（②③⑤ 各列的 SAY 播报请求，从本列内竖直落入本总线，不跨列横穿；再由左端送入 ⑦ 播报通道）" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#E8E8E8;strokeColor=#000000;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="2140" width="3260" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="e_t4_bus2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.086;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="t4" target="bus2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_t5_bus2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;dashed=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.088;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="t5" target="bus2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_w11_bus2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.29;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="w11" target="bus2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_w7_bus2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;dashed=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.292;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="w7" target="bus2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_b2_bus2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;dashed=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.696;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="b2" target="bus2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_b6_bus2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.698;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="b6" target="bus2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_b7_bus2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.7;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="b7" target="bus2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="sec7" value="⑦ 公共播报通道（ESP32 → ASRPRO，逐段播放）" style="text;html=1;fontSize=14;fontStyle=1;align=left;" vertex="1" parent="1">
+          <mxGeometry x="40" y="2192" width="700" height="25" as="geometry" />
+        </mxCell>
+        <mxCell id="p1" value="asrpro_say(ids[], n)&lt;br&gt;ESP32 组帧 &quot;SAY &lt;id&gt; &lt;id&gt; ...\n&quot;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="40" y="2225" width="380" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="p2" value="ASRPRO：serialEvent2()&lt;br&gt;收到 SAY 行 → 拆出 ID 列表入队" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="500" y="2225" width="380" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="p3" value="say_wait_idle()&lt;br&gt;先等当前提示音播完，避免被截断" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="960" y="2225" width="380" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="p4" value="prompt_play_by_cmd_id(id, -1, NULL, true)&lt;br&gt;播放队列中的一段" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1420" y="2225" width="420" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="pd1" value="prompt_is_playing()&lt;br&gt;这一段还在播？" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1930" y="2215" width="360" height="95" as="geometry" />
+        </mxCell>
+        <mxCell id="pd2" value="队列还有下一段？" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="2380" y="2215" width="360" height="95" as="geometry" />
+        </mxCell>
+        <mxCell id="p7" value="取下一条 ID → 回到「播一段」" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="2830" y="2225" width="400" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="d5" value="继续轮询&lt;br&gt;不能在 play_done 回调里续播（会自死锁）" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1930" y="2355" width="360" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="d8" value="播报完毕 → 回 asrpro_main_loop() 重新等待唤醒词&lt;br&gt;（靠 combination_number &gt; 0 判断）" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#000000;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="2380" y="2355" width="360" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="e_bus2_p1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;exitX=0.02;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="bus2" target="p1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_p1_p2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;" edge="1" parent="1" source="p1" target="p2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_p2_p3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;" edge="1" parent="1" source="p2" target="p3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_p3_p4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;" edge="1" parent="1" source="p3" target="p4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_p4_pd1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;" edge="1" parent="1" source="p4" target="pd1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_pd1_d5" value="是" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;fontSize=11;" edge="1" parent="1" source="pd1" target="d5">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_d5_pd1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="d5" target="pd1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_pd1_pd2" value="否" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;fontSize=11;" edge="1" parent="1" source="pd1" target="pd2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_pd2_p7" value="是" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;fontSize=11;" edge="1" parent="1" source="pd2" target="p7">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_p7_p4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;dashed=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="p7" target="p4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_pd2_d8" value="否" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;strokeColor=#000000;fontSize=11;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="pd2" target="d8">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="legend" value="读图提示：① 主流程从左到右走完，向下进入「命令词分发总线」，总线按列下发到 ②③④⑥（⑤ 由 ④ 的 ALARM 串口帧触发）。&lt;br&gt;各功能列内部自上而下流动，跨列连线只有两处：④ 的 ALARM 帧 → ⑤、⑤ 的 SAY 请求 → SAY 总线。&lt;br&gt;所有 SAY 请求都从本列竖直落入 SAY 总线，再由总线左端进入底部的 ⑦ 播报通道。" style="text;html=1;fontSize=12;align=left;verticalAlign=top;fillColor=#F5F5F5;strokeColor=#999999;" vertex="1" parent="1">
+          <mxGeometry x="40" y="2460" width="3260" height="70" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
