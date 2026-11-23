@@ -78,3 +78,6 @@ Desktop.ini
 *.workspace # General workspace files, can be from various tools
 *.suo       # Visual Studio Solution User Options
 *.sln.docstates # Visual Studio
+
+# 本地固件/整片备份，不进公开仓库
+backup_*/

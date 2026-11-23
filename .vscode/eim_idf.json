@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/schema#",
+  "$id": "http://dl.espressif.com/dl/schemas/esp_idf",
+  "_comment": "本项目手工维护,供 ESP-IDF 扩展 2.3.0 识别 d:\\app\\Espressif 下的 ESP-IDF 5.3.4。2.3.0 起不再读取 idf.espIdfPathWin / idf.toolsPathWin 等旧设置,改从本文件读取。注意两点:(1) idfInstalled 必须是数组——旧版 esp_idf.json 那种以 id 为键的对象格式会让扩展激活时抛 TypeError: idfInstalled.filter is not a function;(2) idfInstalled[].path 必须与 .vscode/settings.json 里的 idf.currentSetup 逐字符相同。本文件路径由用户设置 idf.eimIdfJsonPath 指定(该键 scope=application,只能写在用户设置里,写在工作区无效)。删除本文件 + 移除用户设置里的 idf.eimIdfJsonPath 即可完整撤销。",
+  "_warning": "Use / or escaped backslashes when specifying path. Single backslash is not allowed by JSON format.",
+  "gitPath": "d:\\app\\Espressif\\tools\\idf-git\\2.39.2\\cmd\\git.exe",
+  "idfToolsPath": "d:\\app\\Espressif",
+  "idfSelectedId": "esp-idf-a885b5c62145df95fa07e85a57e4d68f",
+  "idfInstalled": [
+    {
+      "id": "esp-idf-a885b5c62145df95fa07e85a57e4d68f",
+      "path": "d:\\app\\Espressif\\FrameWork\\v5.3.4\\esp-idf",
+      "version": "5.3.4",
+      "idfToolsPath": "d:\\app\\Espressif",
+      "python": "d:\\app\\Espressif\\python_env\\idf5.3_py3.12_env\\Scripts\\python.exe",
+      "activationScript": ""
+    }
+  ]
+}
